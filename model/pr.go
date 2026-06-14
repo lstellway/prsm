@@ -31,6 +31,7 @@ type PullRequest struct {
 
 	// State
 	State     PRState
+	Draft     bool           // true when the PR is a draft; set alongside PRStateDraft for providers that expose both
 	Mergeable MergeableState // zero value is MergeableStateUnknown
 
 	// Participants

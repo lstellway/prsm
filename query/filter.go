@@ -84,28 +84,35 @@ func (s PRFilterSpec) Compile(resolvedMe map[model.ProviderKind]model.Author) (P
 	return pred, nil
 }
 
-// resolveMe returns the raw string as-is, unless it is "me", in which case it returns
-// the authenticated username for the PR's provider kind. Returns "" if no identity is found.
-func resolveMe(raw string, pr model.PullRequest, resolvedMe map[model.ProviderKind]model.Author) string {
+// resolveMe returns the username to compare against for a "me" sentinel.
+// Returns ("", false) when "me" cannot be resolved for the PR's provider kind —
+// callers must treat an unresolved "me" as a non-match rather than comparing against "".
+func resolveMe(raw string, pr model.PullRequest, resolvedMe map[model.ProviderKind]model.Author) (string, bool) {
 	if raw != "me" {
-		return raw
+		return raw, true
 	}
 	if identity, ok := resolvedMe[pr.Provider.Kind]; ok {
-		return identity.Username
+		return identity.Username, true
 	}
-	return ""
+	return "", false
 }
 
 func authorPred(author string, resolvedMe map[model.ProviderKind]model.Author) Predicate[model.PullRequest] {
 	return func(pr model.PullRequest) bool {
-		target := resolveMe(author, pr, resolvedMe)
+		target, ok := resolveMe(author, pr, resolvedMe)
+		if !ok {
+			return false
+		}
 		return strings.EqualFold(pr.Author.Username, target)
 	}
 }
 
 func reviewerPred(reviewer string, resolvedMe map[model.ProviderKind]model.Author) Predicate[model.PullRequest] {
 	return func(pr model.PullRequest) bool {
-		target := resolveMe(reviewer, pr, resolvedMe)
+		target, ok := resolveMe(reviewer, pr, resolvedMe)
+		if !ok {
+			return false
+		}
 		for _, rs := range pr.Reviews.RequestedReviewers {
 			if strings.EqualFold(rs.Reviewer.Username, target) {
 				return true
@@ -128,10 +135,11 @@ func statePred(state model.PRState) Predicate[model.PullRequest] {
 }
 
 // draftPred filters based on whether a PR is a draft.
-// Draft state is encoded in model.PRStateDraft rather than a separate bool field.
+// Checks both State == PRStateDraft (providers that encode draft as state) and
+// the Draft bool (providers that expose it as a separate field alongside PRStateOpen).
 func draftPred(draft bool) Predicate[model.PullRequest] {
 	return func(pr model.PullRequest) bool {
-		isDraft := pr.State == model.PRStateDraft
+		isDraft := pr.State == model.PRStateDraft || pr.Draft
 		return isDraft == draft
 	}
 }

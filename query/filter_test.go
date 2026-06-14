@@ -269,6 +269,60 @@ func TestCompile_InvalidCIStatus(t *testing.T) {
 	}
 }
 
+func TestCompile_DraftBoolField(t *testing.T) {
+	pred, err := query.PRFilterSpec{Draft: boolPtr(false)}.Compile(resolvedMe)
+	if err != nil {
+		t.Fatalf("Compile() error: %v", err)
+	}
+
+	// Provider sets pr.Draft = true with State = open (e.g. GitHub before it adopted PRStateDraft)
+	prDraftBool := ghPR()
+	prDraftBool.State = model.PRStateOpen
+	prDraftBool.Draft = true
+	if pred(prDraftBool) {
+		t.Error("expected PR with Draft=true to be excluded by draft=false filter")
+	}
+
+	// Draft=false, State=open → passes
+	if !pred(ghPR()) {
+		t.Error("expected open non-draft PR to pass draft=false filter")
+	}
+}
+
+func TestCompile_ResolveMe_UnknownProvider(t *testing.T) {
+	// resolvedMe has no entry for GitLab — "me" should not match any GitLab PR
+	gitlabPR := model.PullRequest{
+		Provider: model.ProviderInstance{Kind: model.ProviderGitLab},
+		Author:   model.Author{Username: "bob"},
+		State:    model.PRStateOpen,
+	}
+
+	pred, err := query.PRFilterSpec{BaseFilterSpec: query.BaseFilterSpec{Author: "me"}}.Compile(resolvedMe)
+	if err != nil {
+		t.Fatalf("Compile() error: %v", err)
+	}
+	if pred(gitlabPR) {
+		t.Error("expected 'me' with unresolved provider to match nothing, not any GitLab PR")
+	}
+}
+
+func TestCompile_ResolveMe_EmptyUsername(t *testing.T) {
+	// A PR with an empty Author.Username must not match author="me" when "me" is unresolved
+	prEmptyAuthor := model.PullRequest{
+		Provider: model.ProviderInstance{Kind: model.ProviderGitLab},
+		Author:   model.Author{Username: ""},
+		State:    model.PRStateOpen,
+	}
+
+	pred, err := query.PRFilterSpec{BaseFilterSpec: query.BaseFilterSpec{Author: "me"}}.Compile(resolvedMe)
+	if err != nil {
+		t.Fatalf("Compile() error: %v", err)
+	}
+	if pred(prEmptyAuthor) {
+		t.Error("unresolved 'me' must not match a PR with an empty author username")
+	}
+}
+
 func TestCompile_EmptySpec(t *testing.T) {
 	pred, err := query.PRFilterSpec{}.Compile(resolvedMe)
 	if err != nil {
