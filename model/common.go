@@ -1,11 +1,18 @@
 package model
 
-// Author is the normalized identity of a PR author.
-type Author struct {
+// Identity is the normalized identity of a person on a provider.
+// DisplayName may be empty if the provider does not supply one; fall back to Username.
+type Identity struct {
 	Username    string // provider-scoped login; not unique across providers
-	DisplayName string // may equal Username if the provider does not supply a display name
+	DisplayName string // may be empty or redacted depending on provider/permissions
 	AvatarURL   string // empty if not available
 }
+
+// Author is an Identity in the context of PR authorship.
+type Author = Identity
+
+// Reviewer is an Identity in the context of PR review participation.
+type Reviewer = Identity
 
 // Label is a normalized tag attached to a PR.
 type Label struct {

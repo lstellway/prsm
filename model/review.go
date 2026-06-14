@@ -25,7 +25,7 @@ const (
 
 // ReviewerState captures one reviewer's identity and their current decision.
 type ReviewerState struct {
-	Username string         // provider-scoped login; not unique across providers
+	Reviewer Reviewer
 	Decision ReviewDecision
 }
 

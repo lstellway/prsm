@@ -21,7 +21,7 @@ Each provider exposes different terminology (GitHub "pull requests" vs. GitLab "
 | `created_at` | ✓ | ✓ | ✓ |
 | `updated_at` | ✓ | ✓ | ✓ |
 | `labels` | ✓ (name+color) | ✓ (name+color+id+description) | ✓ (name+color) |
-| `requested_reviewers` | ✓ (identity only) | ✓ via `reviewers[]` | ✗ (not in list) |
+| `requested_reviewers` | ✓ (identity only) | ✓ via `reviewers[]` | ✓ (populated from pending review records) |
 | `review states` | ✗ (separate `/reviews` call or GraphQL) | ✗ (approval state needs `/approvals`) | ✗ (separate `/reviews` call) |
 | `CI/check status` | ✗ (separate `/check-runs` call) | ✓ inline via `head_pipeline` | ✗ (separate Gitea Actions call) |
 | `mergeable` | ✓ (`mergeable`, `mergeable_state`) | ✓ (`detailed_merge_status`) | ✓ (`mergeable`) |
@@ -213,12 +213,19 @@ const (
 ### Supporting types
 
 ```go
-// Author is the PR author's normalized identity.
-type Author struct {
-    Username    string  // provider login/username
-    DisplayName string  // may equal Username if display name is unavailable
-    AvatarURL   string  // empty string if not available
+// Identity is the normalized identity of a person on a provider.
+// DisplayName may be empty or redacted depending on provider/permissions; fall back to Username.
+type Identity struct {
+    Username    string // provider-scoped login
+    DisplayName string // may be empty; GitLab may redact based on token permissions
+    AvatarURL   string // empty string if not available
 }
+
+// Author is an Identity in the context of PR authorship.
+type Author = Identity
+
+// Reviewer is an Identity in the context of PR review participation.
+type Reviewer = Identity
 
 // Label is a normalized tag attached to a PR.
 type Label struct {
