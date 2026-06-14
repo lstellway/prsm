@@ -114,39 +114,49 @@ Alternative considered: `~/.prsm/config.toml`. Rejected: pollutes the home direc
 
 ### View definition schema
 
-A **view** is a named preset of filter + sort + grouping that a user can activate from the TUI. Views apply to the normalized PR model, not to a specific provider, so they work across all configured providers simultaneously.
+A **view** is a named preset of filter + sort + grouping that a user can activate from the TUI. Views work across all configured providers simultaneously.
 
-**Filterable fields:**
+Each view requires a `resource` field declaring which resource type it targets. This field is **required** — there is no default. Omitting it is a config load-time error. All resource types are equals; defaulting to `"pr"` would encode an assumption that pull requests are the canonical resource type.
+
+```toml
+[[views]]
+name     = "my-reviews"
+resource = "pr"       # required; "pr" | "issue" | future resource types
+```
+
+Filter keys, sort keys, and grouping keys are resource-scoped: keys valid for `"pr"` may not be valid for `"issue"` and vice versa. prsm validates key compatibility against the declared `resource` type at config load time and fails with a clear error if a mismatch is detected.
+
+**Universal fields (valid for all resource types):**
 
 | Field | Type | Notes |
 |---|---|---|
-| `reviewer` | string or `"me"` | Filter to PRs where the given user is a requested reviewer. `"me"` resolves to the authenticated user for each provider. |
-| `author` | string or `"me"` | Filter to PRs authored by the given user. |
-| `repo` | string or list | Limit to specific repo(s), e.g., `"org/repo"`. |
-| `provider` | string | Limit to a named provider instance, e.g., `"github-personal"`. |
+| `author` | string or `"me"` | Filter by author. `"me"` resolves to the authenticated user per provider. |
+| `repo` | string or list | Limit to specific repo(s), e.g., `"org/repo"`. OR-match across list. |
+| `provider` | string or list | Limit to named provider instance(s). OR-match across list. |
+| `label` | string or list | Must include all listed labels (AND-match). |
+| `staleness_days` | int | Older than N days since last update. |
+| `state` | string | `"open"`, `"closed"`, `"merged"`. Default: `"open"`. |
+
+**PR-specific fields (`resource = "pr"`):**
+
+| Field | Type | Notes |
+|---|---|---|
+| `reviewer` | string or `"me"` | Filter to PRs where the given user is a requested reviewer. |
 | `draft` | bool | `true` = only drafts; `false` = only non-drafts; omit = both. |
 | `ci_status` | string | `"passing"`, `"failing"`, `"pending"`, `"none"`. |
-| `label` | string or list | Must include all listed labels. |
-| `staleness_days` | int | Older than N days since last update. |
-| `status` | string | `"open"`, `"closed"`, `"merged"`. Default: `"open"`. |
 | `review_status` | string | `"approved"`, `"changes_requested"`, `"commented"`, `"none"`. |
 
-**Sort orders:**
-
-- `updated` — most recently updated first (default)
-- `created` — newest first
-- `staleness` — least recently updated first (oldest first)
-- `title` — alphabetical
+**Sort orders (universal):** `updated` (default), `created`, `staleness`, `title`
 
 **Groupings:**
 
 - `none` — flat list (default)
-- `repo` — group by repository
-- `provider` — group by provider instance
-- `review_status` — group by where the PR is in the review cycle
-- `author` — group by PR author
+- `repo` — group by repository *(universal)*
+- `provider` — group by provider instance *(universal)*
+- `author` — group by PR/issue author *(universal)*
+- `review_status` — group by review cycle stage *(PR only)*
 
-**View inheritance:** Views do not inherit from one another in v1. A view is a complete, self-contained preset. A `[defaults]` table in the config sets the starting state before any view is applied. This keeps the mental model simple and avoids the complexity of a mixin/override system.
+**View inheritance:** Views do not inherit from one another in v1. A view is a complete, self-contained preset. A `[defaults]` table in the config sets the starting state before any view is applied.
 
 ---
 
@@ -275,6 +285,7 @@ repo  = "public-project"
 
 [[views]]
 name        = "my-reviews"
+resource    = "pr"   # required — "pr" | "issue" | future resource types
 description = "PRs where I am a requested reviewer, non-draft only"
 
 [views.filter]
@@ -292,6 +303,7 @@ by = "provider"  # "none" | "repo" | "provider" | "review_status" | "author"
 
 [[views]]
 name        = "my-open-prs"
+resource    = "pr"
 description = "All open PRs I authored, newest first"
 
 [views.filter]
@@ -309,6 +321,7 @@ by = "repo"
 
 [[views]]
 name        = "stale-reviews"
+resource    = "pr"
 description = "PRs awaiting my review, untouched for 3+ days"
 
 [views.filter]
@@ -327,6 +340,7 @@ by = "repo"
 
 [[views]]
 name        = "ci-failures"
+resource    = "pr"
 description = "Any open PR in watched repos with a failing pipeline"
 
 [views.filter]
@@ -376,9 +390,11 @@ prsm validates the decoded config before launching the TUI:
 
 1. **Unknown keys** (`meta.Undecoded()`): warn but continue. Allows configs written for future versions to load on older prsm.
 2. **Missing required fields**: fail with a descriptive error pointing to the TOML key and line number (BurntSushi/toml errors include position information).
-3. **Invalid enum values** (e.g., `sort.by = "foobar"`): fail at startup with: `view "my-reviews": sort.by must be one of: updated, created, staleness, title`.
-4. **Duplicate provider names**: fail at startup — provider names are used as keys in the TUI and must be unique.
-5. **Duplicate view names**: fail at startup for the same reason.
-6. **Empty token after env var expansion**: fail at startup per provider, with the env var name in the message.
+3. **Missing `resource` field on a view**: fail at startup with: `view "my-reviews": resource is required ("pr", "issue", …)`.
+4. **Invalid enum values** (e.g., `sort.by = "foobar"`): fail at startup with: `view "my-reviews": sort.by must be one of: updated, created, staleness, title`.
+5. **Resource-incompatible keys** (e.g., `review_status` grouping on an Issue view): fail at startup with: `view "my-issues": group.by "review_status" is not valid for resource "issue"`.
+6. **Duplicate provider names**: fail at startup — provider names are used as keys in the TUI and must be unique.
+7. **Duplicate view names**: fail at startup for the same reason.
+8. **Empty token after env var expansion**: fail at startup per provider, with the env var name in the message.
 
 All startup errors are printed to stderr before the TUI initializes, so they appear as plain text rather than inside a potentially-broken TUI frame.

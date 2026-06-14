@@ -144,11 +144,15 @@ v2 may introduce OR composition via a `[[filter.any]]` / `[[filter.all]]` table 
 **TOML filter syntax (consistent with ADR-005):**
 
 ```toml
+[[views]]
+name     = "my-reviews"
+resource = "pr"   # required on every view; scopes valid filter/sort/group keys
+
 [views.filter]
 author         = "me"
-draft          = false
+draft          = false      # PR-specific field
 staleness_days = 3
-state          = "open"         # default; can omit
+state          = "open"     # default; can omit
 
 # Label AND: PR must have both labels
 label          = ["needs-review", "priority-high"]
@@ -156,7 +160,7 @@ label          = ["needs-review", "priority-high"]
 # Repo OR: PR may be in any of these repos
 repo           = ["acme/api", "acme/frontend"]
 
-# review_status and ci_status are strings matching the enum values
+# review_status and ci_status are PR-specific fields
 review_status  = "review_required"
 ci_status      = "passing"
 ```
@@ -192,13 +196,15 @@ At most one grouping is active at a time. Nested groupings (e.g., group by provi
 
 **Supported groupings in v1:**
 
-| Group key | Groups by | Use case |
-|---|---|---|
-| `none` | No grouping; flat list | Single-provider or homogeneous repo setups |
-| `repo` | `Repo.Owner + "/" + Repo.Name` | Most common: see all PRs per project |
-| `provider` | `Provider.Account` name from config | Multi-provider users who want org-level separation |
-| `review_status` | `Reviews.AggregateState` | Triage-by-stage: "needs review" section first, "approved" section last |
-| `author` | `Author.Username` | Team leads reviewing the team's output |
+| Group key | Scope | Groups by | Use case |
+|---|---|---|---|
+| `none` | universal | No grouping; flat list | Single-provider or homogeneous repo setups |
+| `repo` | universal | `Repo.Owner + "/" + Repo.Name` | Most common: see all PRs per project |
+| `provider` | universal | `Provider.Account` name from config | Multi-provider users who want org-level separation |
+| `author` | universal | `Author.Username` | Team leads reviewing the team's output |
+| `review_status` | PR only | `Reviews.AggregateState` | Triage-by-stage: "needs review" section first, "approved" section last |
+
+Universal grouping keys are valid for all resource types. PR-only keys (`review_status`) are valid only when the view's `resource = "pr"` — using them on an Issue view is a config load-time error.
 
 **Group ordering:**
 - `repo` and `provider` groups are sorted alphabetically by group key.
@@ -209,7 +215,9 @@ At most one grouping is active at a time. Nested groupings (e.g., group by provi
 
 ```toml
 [views.group]
-by = "repo"   # "none" | "repo" | "provider" | "review_status" | "author"
+# Universal keys: "none" | "repo" | "provider" | "author"
+# PR-only keys:   "review_status"
+by = "repo"
 ```
 
 Groups with zero matching PRs are not rendered (empty group headers are never shown).
