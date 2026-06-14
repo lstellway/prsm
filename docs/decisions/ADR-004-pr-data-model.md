@@ -73,7 +73,7 @@ Users may have both `github.com` and `github.example.com` configured simultaneou
 
 ### Score / urgency field
 
-A computed triage score was considered as a top-level field. It is deferred to the view layer. The data model provides the inputs (age, update recency, CI state, review state, draft flag); the view layer computes urgency scores at render time from configurable weights. Baking a score into the struct would couple the data model to one particular triage algorithm.
+A computed triage score was considered as a top-level field and rejected. Priority is not a property of a PR — it is a property of a view configuration. Users express priority through sort and filter expressions (e.g., sort by `changed_files` ASC, then `created_at` DESC). The data model provides the raw inputs; the view layer composes them into order. A baked-in score would collapse multiple signals into one opaque number, couple the model to a specific weighting, and make priority invisible to the user.
 
 ### Label model
 
@@ -362,7 +362,9 @@ type PullRequest struct {
 
 **`LoadResult[T]` over `*T` pointers:** Raw pointer fields create ambiguity between "not loaded" and "explicitly absent." `LoadResult[T]` makes fetch lifecycle a first-class concern, enabling the TUI to show appropriate indicators (spinner for pending, dash for absent, value for loaded) without ad-hoc nil checks throughout the view layer. The generic form keeps the implementation compact and type-safe without requiring a separate wrapper type per field.
 
-**No `Score` or `Urgency` field:** Triage scoring is a view-layer concern computed from configurable weights over the struct's fields. Different users will want different weights (e.g., a team lead prioritizes age; a reviewer prioritizes CI state). Baking a score in the struct would couple the data model to one weighting algorithm and make the score stale whenever weights change without a re-fetch.
+**No `Score` or `Urgency` field:** Priority is a view configuration concern, not a data property. A user's priority definition is a multi-key sort expression — `changed_files ASC, created_at DESC` — not a number. Sort expressions are transparent, serializable to config, and composable; a score collapses multiple signals into one opaque value that requires trusting someone else's weighting. The data model provides the raw fields; the query layer orders them.
+
+**Consumer-agnostic design:** The normalized `PullRequest` type and provider adapters carry no presentation or transport concerns. The TUI is the first consumer but not the only valid one — an MCP server, HTTP handler, or one-shot CLI command all compose the same model and query layers without modification. Nothing in this type encodes how or where it will be rendered.
 
 **`ReviewSummary` design:** Two levels of review data exist in the struct — `RequestedReviewers` (available at list time for GitHub and GitLab) and `ReviewerStates` (the loaded full set of submitted reviews). `AggregateState` is derived from whichever is more complete: before `ReviewerStates` loads, it is inferred from `RequestedReviewers`; after loading, it reflects the actual submitted decisions. This lets the list view show a useful triage signal immediately without waiting for secondary fetches.
 
@@ -394,4 +396,4 @@ Filter and sort expressions operate on `PullRequest` fields. The view layer trea
 - **Issue tracker extension**: the `ProviderInstance` and `LoadResult[T]` patterns carry over to a normalized `Issue` type. The PR and Issue types share no embedding but follow the same structural pattern.
 - **Write operations** (approve, comment): these do not change the data model; they add methods on the adapter interface that take `PullRequest.ProviderID` + `Provider` as inputs.
 - **`AggregateReviewState` expansion**: if providers add new review states (e.g., GitLab adds a "requested changes" concept), the enum is extended and the aggregation logic updated; no change to the struct layout.
-- **Scoring / urgency**: a view-layer `TriageScore(pr PullRequest, weights Weights) int` function can be introduced without touching the data model.
+- **Additional consumers** (MCP server, HTTP API, CLI one-shot): the model and query layers are already consumer-agnostic; new transports add a thin assembly layer without touching this schema.
