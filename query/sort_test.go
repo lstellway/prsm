@@ -48,8 +48,27 @@ func TestSort_UpdatedAsc(t *testing.T) {
 	}
 }
 
-func TestSort_Staleness(t *testing.T) {
-	// Staleness = least recently updated first (oldest first)
+func TestSort_Staleness_Desc(t *testing.T) {
+	// Staleness desc = most stale first (largest staleness number = oldest UpdatedAt first).
+	now := time.Now()
+	prs := []model.PullRequest{
+		makePR("recent", now.Add(-24*time.Hour), now),
+		makePR("stale", now.Add(-168*time.Hour), now),
+		makePR("mid", now.Add(-72*time.Hour), now),
+	}
+
+	sorted := query.Sort(prs, query.SortSpec{By: query.SortStaleness, Direction: query.SortDesc})
+
+	if sorted[0].Title != "stale" {
+		t.Errorf("expected stale first with SortDesc, got %q", sorted[0].Title)
+	}
+	if sorted[2].Title != "recent" {
+		t.Errorf("expected recent last with SortDesc, got %q", sorted[2].Title)
+	}
+}
+
+func TestSort_Staleness_Asc(t *testing.T) {
+	// Staleness asc = least stale first (smallest staleness number = most recently updated first).
 	now := time.Now()
 	prs := []model.PullRequest{
 		makePR("recent", now.Add(-24*time.Hour), now),
@@ -59,11 +78,30 @@ func TestSort_Staleness(t *testing.T) {
 
 	sorted := query.Sort(prs, query.SortSpec{By: query.SortStaleness, Direction: query.SortAsc})
 
-	if sorted[0].Title != "stale" {
-		t.Errorf("expected stale first, got %q", sorted[0].Title)
+	if sorted[0].Title != "recent" {
+		t.Errorf("expected recent first with SortAsc, got %q", sorted[0].Title)
 	}
-	if sorted[2].Title != "recent" {
-		t.Errorf("expected recent last, got %q", sorted[2].Title)
+	if sorted[2].Title != "stale" {
+		t.Errorf("expected stale last with SortAsc, got %q", sorted[2].Title)
+	}
+}
+
+func TestSort_Staleness_DiffersFromUpdated(t *testing.T) {
+	// SortStaleness desc and SortUpdated desc must produce opposite orderings.
+	now := time.Now()
+	prs := []model.PullRequest{
+		makePR("old", now.Add(-72*time.Hour), now),
+		makePR("new", now.Add(-24*time.Hour), now),
+	}
+
+	byUpdatedDesc := query.Sort(prs, query.SortSpec{By: query.SortUpdated, Direction: query.SortDesc})
+	byStalenessDesc := query.Sort(prs, query.SortSpec{By: query.SortStaleness, Direction: query.SortDesc})
+
+	if byUpdatedDesc[0].Title != "new" {
+		t.Errorf("SortUpdated desc should put newest first, got %q", byUpdatedDesc[0].Title)
+	}
+	if byStalenessDesc[0].Title != "old" {
+		t.Errorf("SortStaleness desc should put most stale first, got %q", byStalenessDesc[0].Title)
 	}
 }
 

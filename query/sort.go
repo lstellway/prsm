@@ -56,8 +56,10 @@ func less(a, b model.PullRequest, spec SortSpec) bool {
 	case SortCreated:
 		asc = a.CreatedAt.Before(b.CreatedAt)
 	case SortStaleness:
-		// Staleness = least recently updated first (ascending by UpdatedAt)
-		asc = a.UpdatedAt.Before(b.UpdatedAt)
+		// Staleness = days since UpdatedAt. Ascending = smallest staleness first (recently updated).
+		// Direction is intentionally inverted relative to SortUpdated so that desc = most stale first,
+		// matching the user's mental model of "staleness" as a magnitude (higher = more stale).
+		asc = a.UpdatedAt.After(b.UpdatedAt)
 	case SortTitle:
 		asc = strings.ToLower(a.Title) < strings.ToLower(b.Title)
 	default:
