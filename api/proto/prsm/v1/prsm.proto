@@ -1,0 +1,5 @@
+syntax = "proto3";
+
+package prsm.v1;
+
+option go_package = "github.com/lstellway/prsm/api/gen/prsm/v1;prsmv1";
