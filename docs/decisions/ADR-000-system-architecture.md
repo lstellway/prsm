@@ -16,7 +16,7 @@ Two forces shape this decision:
 
 ## Decision
 
-prsm is organized into four layers with strict boundaries:
+prsm is organized into five layers with strict boundaries:
 
 ```
 ┌─────────────────────────────────────┐
@@ -25,13 +25,15 @@ prsm is organized into four layers with strict boundaries:
                    │  []ResourceType (PullRequest, Issue, …)
 ┌──────────────────▼──────────────────┐
 │           Resource Model             │  Normalized types, LoadResult[T]
-└──────────────────┬──────────────────┘
-                   │  FilterSpec, Predicate[T], sort, group
-┌──────────────────▼──────────────────┐
-│            Query Layer               │  Resource-typed filtering, sorting, grouping
-└──────────────────┬──────────────────┘
-                   │  []ResourceType (filtered, sorted, grouped)
-┌──────────────────▼──────────────────┐
+└──────────┬───────────────┬──────────┘
+           │               │
+┌──────────▼──────────┐  ┌─▼──────────────────────────────────┐
+│     Query Layer      │  │          Event Engine               │
+│                      │  │  Delta detection · Bus[T] · hooks   │
+└──────────┬──────────┘  └─┬──────────────────────────────────┘
+           │               │  []Event[T] (broadcast to subscribers)
+           │  []ResourceType (filtered, sorted, grouped)
+┌──────────▼───────────────▼──────────┐
 │             Consumers                │  TUI · MCP server · HTTP API · library
 └─────────────────────────────────────┘
 ```
@@ -62,14 +64,24 @@ The filter, sort, and group logic that operates on resource model types. Defined
 - Sort and group keys are resource-scoped. Universal keys (`repo`, `provider`, `author`, `updated`, `created`, `staleness`) apply to all resource types. Resource-specific keys (`review_status` for PRs; `milestone` for Issues) are valid only for their declared resource type. Invalid keys for the declared resource type are a config load-time error.
 - The query layer is consumer-agnostic. The TUI, MCP server, HTTP API, and library all use the same `FilterSpec` → `Predicate[T]` pipeline. No consumer gets a special query path.
 
-### Layer 4: Consumers
+### Layer 4: Event Engine
+
+A delta-detection and pub/sub layer that runs alongside the query layer. After each poll cycle, the Event Engine diffs the incoming resource snapshot against its in-memory state cache, emits typed events for any transitions detected, and broadcasts them to all subscribers via a generic `Bus[T]`. Defined in ADR-007.
+
+- Events are typed and carry both the current and previous resource state.
+- The Bus uses a per-subscriber buffered channel pattern (`Bus[Event[T]]`) so no subscriber can block another.
+- Subscribers include: the TUI notifications panel, the shell hook runner (user-configured commands), and library consumers.
+- State is in-memory only — the cache is established on first load and cleared on exit. No persistence layer.
+- Hook filter expressions reuse the same `FilterSpec` vocabulary as the query layer (ADR-006).
+
+### Layer 5: Consumers
 
 Consumers assemble the provider adapters, resource model, and query layer to serve a specific interface. The TUI is the first consumer.
 
-- **TUI (Bubble Tea v2)** — interactive terminal UI. The TUI owns the rendering loop, keybinding handling, and panel layout. It does not own the data model or query logic.
+- **TUI (Bubble Tea v2)** — interactive terminal UI. The TUI owns the rendering loop, keybinding handling, and panel layout. It does not own the data model or query logic. The TUI also subscribes to the Event Engine to power a notifications panel.
 - **MCP server** — exposes prsm's resource data to AI agents via the Model Context Protocol. Same model and query layer as the TUI; different transport.
 - **HTTP API** — serves normalized resource data over HTTP/JSON for dashboards, scripts, and third-party integrations.
-- **Library** — exposes the provider adapters, resource model, and query layer as importable Go packages for third-party tools.
+- **Library** — exposes the provider adapters, resource model, query layer, and event stream as importable Go packages for third-party tools. Library consumers subscribe to the Event Engine directly via typed channels.
 
 Each consumer adds a thin assembly and transport layer. No consumer requires changes to the model, query layer, or adapters.
 
@@ -103,6 +115,7 @@ The `resource` field is required — not optional with a default — because def
 - Adapters must not import consumer packages.
 - The resource model must not import adapter or consumer packages.
 - The query layer must not import adapter or consumer packages.
+- The Event Engine must not import consumer packages; it may import the resource model only.
 - Consumers may import all lower layers.
 - No layer may import a higher layer (no upward dependencies).
 
@@ -112,5 +125,7 @@ v1 ships with:
 - One resource type: `PullRequest`
 - One provider: GitHub (establishes the adapter interface pattern)
 - One consumer: TUI
+
+v1.1 adds the Event Engine and hook system (ADR-007). The resource model and query layer require no changes for this addition — the Event Engine slots in as a parallel path alongside the existing query pipeline.
 
 Each subsequent release adds providers, resource types, or consumers independently. The architecture is designed so that adding any one of these does not require modifying the others.

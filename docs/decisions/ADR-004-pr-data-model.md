@@ -302,6 +302,7 @@ type PullRequest struct {
     Title        string
     SourceBranch string // head branch (the branch being merged)
     TargetBranch string // base branch (the branch being merged into)
+    HeadSHA      string // commit SHA at the tip of the source branch; used by the Event Engine to detect new commits
     Body         string // PR description; may be empty
 
     // --- State ---
@@ -397,3 +398,4 @@ Filter and sort expressions operate on `PullRequest` fields. The view layer trea
 - **Write operations** (approve, comment): these do not change the data model; they add methods on the adapter interface that take `PullRequest.ProviderID` + `Provider` as inputs.
 - **`AggregateReviewState` expansion**: if providers add new review states (e.g., GitLab adds a "requested changes" concept), the enum is extended and the aggregation logic updated; no change to the struct layout.
 - **Additional consumers** (MCP server, HTTP API, CLI one-shot): the model and query layers are already consumer-agnostic; new transports add a thin assembly layer without touching this schema.
+- **Event Engine (ADR-007)**: the `PullRequest` type is the unit of comparison in the delta engine. Identity is keyed on `(Provider.Kind, Provider.Host, ProviderID)`. Field-level diff relies on all `PullRequest` fields being comparable — no map fields are used; slices and structs are compared field-by-field. `HeadSHA` is the signal for `pr.new_commit` detection. `LoadResult[T]` state transitions (Pending → Loaded) do not trigger events; only value changes in loaded fields do.
