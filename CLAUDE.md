@@ -76,3 +76,30 @@ Resource types are first-class equals. Adding a new resource type means defining
 - Inline review actions (approve, comment, merge) — prsm surfaces what to review; the web UI does the review
 - Replacing the web UI or becoming a full GitHub/GitLab client
 - Issue resource type — architecture is designed for it; implementation is post-v1
+
+## Decisions
+
+Key decisions are documented in `docs/decisions/`. Read the relevant ADR before implementing anything it covers.
+
+- [ADR-000: System Architecture](docs/decisions/ADR-000-system-architecture.md)
+- [ADR-001: Tech Stack](docs/decisions/ADR-001-tech-stack.md)
+- [ADR-002: v1 Provider Set](docs/decisions/ADR-002-v1-providers.md)
+- [ADR-003: Liveness Model](docs/decisions/ADR-003-liveness-model.md)
+- [ADR-004: PR Data Model](docs/decisions/ADR-004-pr-data-model.md)
+- [ADR-005: Config Format](docs/decisions/ADR-005-config-format.md)
+- [ADR-006: Filtering and Grouping](docs/decisions/ADR-006-filtering-grouping.md)
+- [ADR-007: Event Engine and Hook System](docs/decisions/ADR-007-event-engine.md)
+
+## Current State
+
+| Package | Status | Description |
+|---|---|---|
+| `model/` | Done | Normalized resource types — `PullRequest`, `LoadResult[T]`, reviews, CI, diff |
+| `adapter/` | Done | Provider adapter interface + stub implementations (GitHub, GitLab, Gitea, mock) |
+| `config/` | Done | TOML loader, XDG path, validation (all 8 ADR-005 rules), first-run scaffold |
+| `query/` | Stub | Filter, sort, group pipeline — not yet implemented |
+| `client/` | Stub | — |
+| `event/` | Stub | Event engine (planned v1.1 per ADR-007) |
+| `internal/hook/` | Stub | Shell hook runner |
+| `internal/tui/` | Stub | Bubble Tea TUI consumer |
+| `cmd/prsm/` | Stub | CLI entrypoint |
