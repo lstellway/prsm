@@ -176,11 +176,13 @@ func repoPred(repos []string) Predicate[model.PullRequest] {
 	}
 }
 
-// providerPred implements OR-match: the PR must be from at least one of the listed provider accounts.
+// providerPred implements OR-match: the PR must be from at least one of the listed providers.
+// Matches against Provider.Name (the user-assigned config alias, e.g. "github-personal"),
+// consistent with FilterConfig.Provider in config/.
 func providerPred(providers []string) Predicate[model.PullRequest] {
 	return func(pr model.PullRequest) bool {
 		for _, p := range providers {
-			if strings.EqualFold(pr.Provider.Account, p) {
+			if strings.EqualFold(pr.Provider.Name, p) {
 				return true
 			}
 		}

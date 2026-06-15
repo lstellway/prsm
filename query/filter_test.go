@@ -15,7 +15,7 @@ var resolvedMe = map[model.ProviderKind]model.Author{
 
 func ghPR(opts ...func(*model.PullRequest)) model.PullRequest {
 	pr := model.PullRequest{
-		Provider: model.ProviderInstance{Kind: model.ProviderGitHub, Account: "acme"},
+		Provider: model.ProviderInstance{Name: "github-personal", Kind: model.ProviderGitHub, Account: "acme"},
 		State:    model.PRStateOpen,
 	}
 	for _, o := range opts {
@@ -266,6 +266,38 @@ func TestCompile_InvalidCIStatus(t *testing.T) {
 	_, err := query.PRFilterSpec{CIStatus: "bogus"}.Compile(resolvedMe)
 	if err == nil {
 		t.Error("expected error for invalid ci_status")
+	}
+}
+
+func TestCompile_ProviderORMatch(t *testing.T) {
+	pred, err := query.PRFilterSpec{
+		BaseFilterSpec: query.BaseFilterSpec{Provider: []string{"github-personal", "gitlab-work"}},
+	}.Compile(resolvedMe)
+	if err != nil {
+		t.Fatalf("Compile() error: %v", err)
+	}
+
+	prGitHub := model.PullRequest{
+		Provider: model.ProviderInstance{Name: "github-personal", Kind: model.ProviderGitHub},
+		State:    model.PRStateOpen,
+	}
+	prGitLab := model.PullRequest{
+		Provider: model.ProviderInstance{Name: "gitlab-work", Kind: model.ProviderGitLab},
+		State:    model.PRStateOpen,
+	}
+	prOther := model.PullRequest{
+		Provider: model.ProviderInstance{Name: "codeberg", Kind: model.ProviderGitea},
+		State:    model.PRStateOpen,
+	}
+
+	if !pred(prGitHub) {
+		t.Error("expected github-personal to match")
+	}
+	if !pred(prGitLab) {
+		t.Error("expected gitlab-work to match")
+	}
+	if pred(prOther) {
+		t.Error("expected codeberg to not match")
 	}
 }
 
