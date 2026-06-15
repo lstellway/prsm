@@ -308,7 +308,7 @@ description = "All open PRs I authored, newest first"
 
 [views.filter]
 author = "me"
-status = "open"  # "open" | "closed" | "merged" — defaults to "open"
+state  = "open"  # "open" | "closed" | "merged" | "draft" — defaults to "open"
 
 [views.sort]
 by        = "created"
