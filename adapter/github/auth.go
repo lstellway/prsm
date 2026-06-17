@@ -1,15 +1,29 @@
 package github
 
 import (
-	"context"
 	"net/http"
+	"time"
 
+	"github.com/bartventer/httpcache"
+	_ "github.com/bartventer/httpcache/store/memcache"
 	"golang.org/x/oauth2"
 )
 
-// newHTTPClient creates an authenticated HTTP client using a Personal Access Token.
-// The returned client is used for both REST and GraphQL requests.
-func newHTTPClient(ctx context.Context, token string) *http.Client {
+// newHTTPClient creates an authenticated HTTP client with transparent ETag caching.
+// The oauth2 transport handles PAT injection; httpcache wraps it to send
+// If-None-Match on repeat requests and serve 304 responses from cache at zero
+// rate-limit cost (GitHub exempts 304s from the primary request budget).
+func newHTTPClient(token string) *http.Client {
 	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
-	return oauth2.NewClient(ctx, ts)
+	oauthTransport := &oauth2.Transport{
+		Source: ts,
+		Base:   http.DefaultTransport,
+	}
+	return &http.Client{
+		Transport: httpcache.NewTransport(
+			"memcache://",
+			httpcache.WithUpstream(oauthTransport),
+		),
+		Timeout: 30 * time.Second,
+	}
 }

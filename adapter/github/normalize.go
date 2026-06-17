@@ -1,52 +1,52 @@
 package github
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 	"strings"
-	"time"
 
 	gogithub "github.com/google/go-github/v88/github"
 	"github.com/lstellway/prsm/model"
 )
 
-// normalizePR maps a GitHub GraphQL pull request node to model.PullRequest.
+// normalizePR maps a GitHub REST pull request to model.PullRequest.
 // All list-time fields are populated; lazy fields (CI, ReviewerStates, Diff)
 // are set to LoadStatePending.
-func normalizePR(node prNode, instance model.ProviderInstance) model.PullRequest {
-	pr := model.PullRequest{
-		ProviderID:   node.ID,
-		Number:       node.Number,
+//
+// Fields not available from the REST list endpoint:
+//   - CommentCount: not returned by GET /pulls; set to zero until a future lazy load
+//   - Mergeable: not computed by GitHub at list time; set to MergeableStateUnknown
+func normalizePR(pr *gogithub.PullRequest, owner, repo string, instance model.ProviderInstance) model.PullRequest {
+	result := model.PullRequest{
+		ProviderID:   pr.GetNodeID(),
+		Number:       pr.GetNumber(),
 		Provider:     instance,
-		URL:          node.URL,
-		Title:        node.Title,
-		Body:         node.Body,
-		SourceBranch: node.HeadRefName,
-		TargetBranch: node.BaseRefName,
-		HeadSHA:      node.HeadRefOid,
-		Draft:        node.IsDraft,
-		CommentCount: node.Comments.TotalCount,
-		Repo: model.Repository{
-			Owner: node.Repository.Owner.Login,
-			Name:  node.Repository.Name,
-		},
-		CI:        model.Pending[model.CIStatus](),
-		Diff:      model.Pending[model.DiffStats](),
-		CreatedAt: node.CreatedAt,
-		UpdatedAt: node.UpdatedAt,
+		URL:          pr.GetHTMLURL(),
+		Title:        pr.GetTitle(),
+		Body:         pr.GetBody(),
+		SourceBranch: pr.GetHead().GetRef(),
+		TargetBranch: pr.GetBase().GetRef(),
+		HeadSHA:      pr.GetHead().GetSHA(),
+		Draft:        pr.GetDraft(),
+		Repo:         model.Repository{Owner: owner, Name: repo},
+		CI:           model.Pending[model.CIStatus](),
+		Diff:         model.Pending[model.DiffStats](),
+		CreatedAt:    pr.GetCreatedAt().Time,
+		UpdatedAt:    pr.GetUpdatedAt().Time,
 	}
 
-	if !node.MergedAt.IsZero() {
-		t := node.MergedAt
-		pr.MergedAt = &t
+	if mergedAt := pr.GetMergedAt(); !mergedAt.IsZero() {
+		cp := mergedAt.Time
+		result.MergedAt = &cp
 	}
 
-	pr.State = normalizePRState(node.State, node.IsDraft)
-	pr.Mergeable = normalizeMergeable(node.Mergeable)
-	pr.Author = normalizeIdentity(node.Author.Login, node.Author.Name, node.Author.AvatarURL)
-	pr.Labels = normalizeLabels(node.Labels.Nodes)
-	pr.Reviews = normalizeReviewSummary(node.ReviewRequests.Nodes)
+	result.State = normalizePRState(pr.GetState(), pr.GetDraft())
+	result.Author = normalizeIdentity(pr.GetUser().GetLogin(), "", pr.GetUser().GetAvatarURL())
+	result.Labels = normalizeLabels(pr.Labels)
+	result.Reviews = normalizeReviewSummary(pr.RequestedReviewers)
 
-	return pr
+	return result
 }
 
 func normalizePRState(state string, isDraft bool) model.PRState {
@@ -65,17 +65,6 @@ func normalizePRState(state string, isDraft bool) model.PRState {
 	}
 }
 
-func normalizeMergeable(s string) model.MergeableState {
-	switch strings.ToUpper(s) {
-	case "MERGEABLE":
-		return model.MergeableStateMergeable
-	case "CONFLICTING":
-		return model.MergeableStateConflicting
-	default:
-		return model.MergeableStateUnknown
-	}
-}
-
 func normalizeIdentity(login, name, avatarURL string) model.Identity {
 	if name == "" {
 		name = login
@@ -87,37 +76,38 @@ func normalizeIdentity(login, name, avatarURL string) model.Identity {
 	}
 }
 
-func normalizeLabels(nodes []prLabel) []model.Label {
-	if len(nodes) == 0 {
+func normalizeLabels(labels []*gogithub.Label) []model.Label {
+	if len(labels) == 0 {
 		return nil
 	}
-	labels := make([]model.Label, len(nodes))
-	for i, l := range nodes {
-		color := l.Color
+	result := make([]model.Label, len(labels))
+	for i, l := range labels {
+		color := l.GetColor()
 		if color != "" && !strings.HasPrefix(color, "#") {
 			color = "#" + color
 		}
-		labels[i] = model.Label{Name: l.Name, Color: color}
+		result[i] = model.Label{Name: l.GetName(), Color: color}
 	}
-	return labels
+	return result
 }
 
-// normalizeReviewSummary builds a ReviewSummary from list-time GraphQL data.
-// RequestedReviewers is populated; ReviewerStates starts as Pending.
-// AggregateState is conservatively derived: ReviewRequired if any requestee exists.
-func normalizeReviewSummary(nodes []reviewRequestNode) model.ReviewSummary {
+// normalizeReviewSummary builds a ReviewSummary from the REST list-time
+// requested_reviewers field. ReviewerStates starts as Pending.
+// AggregateState is conservatively set to ReviewRequired if any requestee exists.
+func normalizeReviewSummary(reviewers []*gogithub.User) model.ReviewSummary {
 	rs := model.ReviewSummary{
 		ReviewerStates: model.Pending[[]model.ReviewerState](),
 	}
 
-	for _, n := range nodes {
-		if n.RequestedReviewer.Login == "" {
+	for _, u := range reviewers {
+		if u.GetLogin() == "" {
 			continue
 		}
 		rs.RequestedReviewers = append(rs.RequestedReviewers, model.ReviewerState{
 			Reviewer: model.Identity{
-				Username:    n.RequestedReviewer.Login,
-				DisplayName: n.RequestedReviewer.Name,
+				Username:    u.GetLogin(),
+				DisplayName: u.GetLogin(), // display name not available in REST list user objects
+				AvatarURL:   u.GetAvatarURL(),
 			},
 			Decision: model.ReviewDecisionPending,
 		})
@@ -183,6 +173,9 @@ func normalizeCIStatus(runs []*gogithub.CheckRun) model.CIStatus {
 		case status == "in_progress" || status == "queued" || conclusion == "":
 			pending++
 		default:
+			// "skipped", "neutral", "cancelled", "stale" — counted as passing.
+			// DESIGN DECISION NEEDED: these are not failures but also not successes;
+			// revisit when the TUI needs to distinguish them for display.
 			passing++
 		}
 	}
@@ -223,7 +216,8 @@ func normalizeReviewDecision(state string) model.ReviewDecision {
 }
 
 // normalizeReviewerStates maps GitHub REST review objects to []ReviewerState.
-// Only the most-recent review per reviewer is retained.
+// Only the most-recent review per reviewer is retained, matching GitHub's own
+// PR review UI which collapses multiple reviews per reviewer to their latest state.
 func normalizeReviewerStates(reviews []*gogithub.PullRequestReview) []model.ReviewerState {
 	seen := make(map[string]model.ReviewDecision)
 	names := make(map[string]string)
@@ -254,50 +248,8 @@ func normalizeReviewerStates(reviews []*gogithub.PullRequestReview) []model.Revi
 			Decision: decision,
 		})
 	}
+	slices.SortFunc(states, func(a, b model.ReviewerState) int {
+		return cmp.Compare(a.Reviewer.Username, b.Reviewer.Username)
+	})
 	return states
-}
-
-// GraphQL response type definitions.
-
-type prNode struct {
-	ID             string
-	Number         int
-	Title          string
-	Body           string
-	URL            string
-	State          string
-	IsDraft        bool
-	HeadRefName    string
-	BaseRefName    string
-	HeadRefOid     string
-	Mergeable      string
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	MergedAt       time.Time
-	Author         prAuthor
-	Labels         struct{ Nodes []prLabel }
-	ReviewRequests struct{ Nodes []reviewRequestNode }
-	Comments       struct{ TotalCount int }
-	Repository     struct {
-		Name  string
-		Owner struct{ Login string }
-	}
-}
-
-type prAuthor struct {
-	Login     string
-	Name      string
-	AvatarURL string
-}
-
-type prLabel struct {
-	Name  string
-	Color string
-}
-
-type reviewRequestNode struct {
-	RequestedReviewer struct {
-		Login string
-		Name  string
-	}
 }

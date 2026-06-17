@@ -1,16 +1,15 @@
 // Package github implements the prsm provider adapter for GitHub.com and
-// GitHub Enterprise Server. It uses the GraphQL API for ListPullRequests
-// (batches PR list + requested reviewers in one query per repo) and the
-// REST API for LoadCI, LoadReviewerStates, and LoadDiff.
+// GitHub Enterprise Server. It uses the REST API throughout:
+//   - ListPullRequests: GET /repos/{owner}/{repo}/pulls (ETag-cached via httpcache)
+//   - LoadCI: GET /repos/{owner}/{repo}/commits/{ref}/check-runs
+//   - LoadReviewerStates: GET /repos/{owner}/{repo}/pulls/{number}/reviews
+//   - LoadDiff: GET /repos/{owner}/{repo}/pulls/{number}
 package github
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
 
 	gogithub "github.com/google/go-github/v88/github"
@@ -18,11 +17,7 @@ import (
 	"github.com/lstellway/prsm/model"
 )
 
-const (
-	defaultAPIBaseURL     = "https://api.github.com"
-	defaultGraphQLBaseURL = "https://api.github.com/graphql"
-	graphQLPageSize       = 100
-)
+const defaultAPIBaseURL = "https://api.github.com"
 
 // GitHubAdapter is the prsm provider adapter for GitHub.
 type GitHubAdapter struct {
@@ -30,9 +25,6 @@ type GitHubAdapter struct {
 	instance     model.ProviderInstance
 	repos        []config.RepoRef
 	rest         *gogithub.Client
-	graphqlURL   string
-	httpClient   *http.Client
-	etags        *etagCache
 }
 
 // New constructs a GitHubAdapter from a ProviderConfig.
@@ -42,21 +34,16 @@ func New(cfg config.ProviderConfig) (*GitHubAdapter, error) {
 		return nil, fmt.Errorf("github adapter %q: auth.token is required", cfg.Name)
 	}
 
-	httpClient := newHTTPClient(context.Background(), cfg.Auth.Token)
+	httpClient := newHTTPClient(cfg.Auth.Token)
 
 	apiBase := strings.TrimRight(cfg.BaseURL, "/")
 	if apiBase == "" {
 		apiBase = defaultAPIBaseURL
 	}
 
-	graphqlURL := defaultGraphQLBaseURL
-	if cfg.BaseURL != "" {
-		// GitHub Enterprise: strip /api/v3 suffix and append /api/graphql.
-		host := strings.TrimSuffix(strings.TrimRight(cfg.BaseURL, "/"), "/api/v3")
-		graphqlURL = host + "/api/graphql"
-	}
-
-	restOpts := []gogithub.ClientOptionsFunc{gogithub.WithAuthToken(cfg.Auth.Token)}
+	// Pass our pre-configured http.Client (oauth2 auth + ETag caching) directly.
+	// Do NOT also call WithAuthToken — auth is already handled by the transport.
+	restOpts := []gogithub.ClientOptionsFunc{gogithub.WithHTTPClient(httpClient)}
 	if apiBase != defaultAPIBaseURL {
 		restOpts = append(restOpts, gogithub.WithEnterpriseURLs(apiBase+"/", apiBase+"/"))
 	}
@@ -73,16 +60,13 @@ func New(cfg config.ProviderConfig) (*GitHubAdapter, error) {
 	return &GitHubAdapter{
 		providerName: cfg.Name,
 		instance: model.ProviderInstance{
-			Name:    cfg.Name,
-			Kind:    model.ProviderGitHub,
-			Host:    host,
-			Account: cfg.Name,
+			Name: cfg.Name,
+			Kind: model.ProviderGitHub,
+			Host: host,
+			// Account is populated by ResolveIdentity once called at startup.
 		},
-		repos:      cfg.Repos,
-		rest:       restClient,
-		graphqlURL: graphqlURL,
-		httpClient: httpClient,
-		etags:      newETagCache(),
+		repos: cfg.Repos,
+		rest:  restClient,
 	}, nil
 }
 
@@ -92,13 +76,14 @@ func (a *GitHubAdapter) Kind() model.ProviderKind { return model.ProviderGitHub 
 // Instance returns the full ProviderInstance this adapter serves.
 func (a *GitHubAdapter) Instance() model.ProviderInstance { return a.instance }
 
-// ResolveIdentity returns the authenticated user's identity.
+// ResolveIdentity returns the authenticated user's identity and populates
+// Instance().Account with the resolved GitHub login for "me" sentinel resolution.
 func (a *GitHubAdapter) ResolveIdentity(ctx context.Context) (model.Identity, error) {
 	user, resp, err := a.rest.Users.Get(ctx, "")
 	if err != nil {
 		return model.Identity{}, fmt.Errorf("github %q: resolve identity: %w", a.providerName, err)
 	}
-	if err := checkRateLimit(a.instance,resp.Response); err != nil {
+	if err := checkRateLimit(a.instance, resp.Response); err != nil {
 		return model.Identity{}, err
 	}
 
@@ -106,6 +91,7 @@ func (a *GitHubAdapter) ResolveIdentity(ctx context.Context) (model.Identity, er
 	if name == "" {
 		name = user.GetLogin()
 	}
+	a.instance.Account = user.GetLogin()
 	return model.Identity{
 		Username:    user.GetLogin(),
 		DisplayName: name,
@@ -113,120 +99,58 @@ func (a *GitHubAdapter) ResolveIdentity(ctx context.Context) (model.Identity, er
 	}, nil
 }
 
-// ListPullRequests fetches all open pull requests across configured repos via GraphQL.
+// ListPullRequests fetches all open pull requests across configured repos via REST.
+// Results from repos that succeed are returned even when other repos fail;
+// all errors are joined and returned alongside the partial result.
 func (a *GitHubAdapter) ListPullRequests(ctx context.Context) ([]model.PullRequest, error) {
 	var all []model.PullRequest
+	var errs []error
 	for _, ref := range a.repos {
 		prs, err := a.listRepoPRs(ctx, ref.Owner, ref.Repo)
 		if err != nil {
-			return nil, err
+			errs = append(errs, err)
+			continue
 		}
 		all = append(all, prs...)
 	}
-	return all, nil
+	return all, errors.Join(errs...)
 }
 
 func (a *GitHubAdapter) listRepoPRs(ctx context.Context, owner, repo string) ([]model.PullRequest, error) {
-	return a.listRepoPRsWithCursor(ctx, owner, repo, "")
-}
+	// 50 pages × 100 PRs = 5,000 PRs maximum per repo per call.
+	const maxPages = 50
 
-func (a *GitHubAdapter) listRepoPRsWithCursor(ctx context.Context, owner, repo, cursor string) ([]model.PullRequest, error) {
-	const query = `
-query ListPullRequests($owner: String!, $name: String!, $after: String, $first: Int!) {
-  repository(owner: $owner, name: $name) {
-    pullRequests(first: $first, after: $after, states: [OPEN]) {
-      pageInfo { hasNextPage endCursor }
-      nodes {
-        id
-        number
-        title
-        body
-        url
-        state
-        isDraft
-        headRefName
-        baseRefName
-        headRefOid
-        mergeable
-        createdAt
-        updatedAt
-        mergedAt
-        author {
-          login
-          ... on User { name avatarUrl }
-        }
-        labels(first: 20) {
-          nodes { name color }
-        }
-        reviewRequests(first: 20) {
-          nodes {
-            requestedReviewer {
-              ... on User { login name }
-            }
-          }
-        }
-        comments { totalCount }
-        repository {
-          name
-          owner { login }
-        }
-      }
-    }
-  }
-}`
-
-	vars := map[string]any{
-		"owner": owner,
-		"name":  repo,
-		"first": graphQLPageSize,
-		"after": nil,
-	}
-	if cursor != "" {
-		vars["after"] = cursor
+	opts := &gogithub.PullRequestListOptions{
+		State:       "open",
+		ListOptions: gogithub.ListOptions{PerPage: 100},
 	}
 
-	var result struct {
-		Data struct {
-			Repository struct {
-				PullRequests struct {
-					PageInfo struct {
-						HasNextPage bool
-						EndCursor   string
-					}
-					Nodes []prNode
-				}
-			}
+	var all []model.PullRequest
+	for page := 1; ; page++ {
+		if page > maxPages {
+			return nil, fmt.Errorf("github %q: list PRs %s/%s: exceeded %d-page limit",
+				a.providerName, owner, repo, maxPages)
 		}
-		Errors []struct{ Message string }
-	}
 
-	if err := a.runGraphQL(ctx, query, vars, &result); err != nil {
-		return nil, err
-	}
-	if len(result.Errors) > 0 {
-		msgs := make([]string, len(result.Errors))
-		for i, e := range result.Errors {
-			msgs[i] = e.Message
-		}
-		return nil, fmt.Errorf("github %q: graphql: %s", a.providerName, strings.Join(msgs, "; "))
-	}
-
-	nodes := result.Data.Repository.PullRequests.Nodes
-	prs := make([]model.PullRequest, len(nodes))
-	for i, node := range nodes {
-		prs[i] = normalizePR(node, a.instance)
-	}
-
-	if result.Data.Repository.PullRequests.PageInfo.HasNextPage {
-		next, err := a.listRepoPRsWithCursor(ctx, owner, repo,
-			result.Data.Repository.PullRequests.PageInfo.EndCursor)
+		prs, resp, err := a.rest.PullRequests.List(ctx, owner, repo, opts)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("github %q: list PRs %s/%s: %w", a.providerName, owner, repo, err)
 		}
-		prs = append(prs, next...)
+		if rlErr := checkRateLimit(a.instance, resp.Response); rlErr != nil {
+			return nil, rlErr
+		}
+
+		for _, pr := range prs {
+			all = append(all, normalizePR(pr, owner, repo, a.instance))
+		}
+
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
 	}
 
-	return prs, nil
+	return all, nil
 }
 
 // LoadCI fetches CI/check-run status for a PR's head commit via REST.
@@ -247,7 +171,7 @@ func (a *GitHubAdapter) LoadCI(ctx context.Context, pr model.PullRequest) (model
 			return model.CIStatus{}, fmt.Errorf("github %q: load CI for %s#%d: %w",
 				a.providerName, pr.Repo.Name, pr.Number, err)
 		}
-		if rlErr := checkRateLimit(a.instance,resp.Response); rlErr != nil {
+		if rlErr := checkRateLimit(a.instance, resp.Response); rlErr != nil {
 			return model.CIStatus{}, rlErr
 		}
 		allRuns = append(allRuns, runs.CheckRuns...)
@@ -272,7 +196,7 @@ func (a *GitHubAdapter) LoadReviewerStates(ctx context.Context, pr model.PullReq
 			return nil, fmt.Errorf("github %q: load reviews for %s#%d: %w",
 				a.providerName, pr.Repo.Name, pr.Number, err)
 		}
-		if rlErr := checkRateLimit(a.instance,resp.Response); rlErr != nil {
+		if rlErr := checkRateLimit(a.instance, resp.Response); rlErr != nil {
 			return nil, rlErr
 		}
 		allReviews = append(allReviews, reviews...)
@@ -292,7 +216,7 @@ func (a *GitHubAdapter) LoadDiff(ctx context.Context, pr model.PullRequest) (mod
 		return model.DiffStats{}, fmt.Errorf("github %q: load diff for %s#%d: %w",
 			a.providerName, pr.Repo.Name, pr.Number, err)
 	}
-	if rlErr := checkRateLimit(a.instance,resp.Response); rlErr != nil {
+	if rlErr := checkRateLimit(a.instance, resp.Response); rlErr != nil {
 		return model.DiffStats{}, rlErr
 	}
 	return model.DiffStats{
@@ -301,61 +225,6 @@ func (a *GitHubAdapter) LoadDiff(ctx context.Context, pr model.PullRequest) (mod
 		Additions:    ghPR.GetAdditions(),
 		Deletions:    ghPR.GetDeletions(),
 	}, nil
-}
-
-// runGraphQL executes a GitHub GraphQL query and decodes the response into result.
-// It attaches If-None-Match headers and handles 304 responses from the ETag cache.
-func (a *GitHubAdapter) runGraphQL(ctx context.Context, query string, variables map[string]any, result any) error {
-	body, err := json.Marshal(map[string]any{
-		"query":     query,
-		"variables": variables,
-	})
-	if err != nil {
-		return fmt.Errorf("github %q: graphql marshal: %w", a.providerName, err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.graphqlURL, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("github %q: graphql request: %w", a.providerName, err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	a.etags.setRequestHeaders(req)
-
-	resp, err := a.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("github %q: graphql: %w", a.providerName, err)
-	}
-	defer resp.Body.Close()
-
-	if rlErr := checkRateLimit(a.instance,resp); rlErr != nil {
-		return rlErr
-	}
-
-	key := a.graphqlURL + "?" + cacheKey(query)
-
-	if resp.StatusCode == http.StatusNotModified {
-		if cached, ok := a.etags.loadValue(key); ok {
-			data, err := json.Marshal(cached)
-			if err == nil {
-				return json.Unmarshal(data, result)
-			}
-		}
-		return nil
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("github %q: graphql: HTTP %d: %s", a.providerName, resp.StatusCode, string(b))
-	}
-
-	a.etags.recordResponse(a.graphqlURL, resp)
-
-	if err := json.NewDecoder(resp.Body).Decode(result); err != nil {
-		return fmt.Errorf("github %q: graphql decode: %w", a.providerName, err)
-	}
-
-	a.etags.storeValue(key, result)
-	return nil
 }
 
 func extractHost(rawURL string) string {
@@ -367,10 +236,3 @@ func extractHost(rawURL string) string {
 	return rawURL
 }
 
-func cacheKey(query string) string {
-	const maxLen = 64
-	if len(query) > maxLen {
-		return query[:maxLen]
-	}
-	return query
-}
