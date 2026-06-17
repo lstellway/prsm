@@ -24,8 +24,8 @@ Each provider exposes different terminology (GitHub "pull requests" vs. GitLab "
 | `requested_reviewers` | ✓ (identity only) | ✓ via `reviewers[]` | ✓ (populated from pending review records) |
 | `review states` | ✗ (separate `/reviews` call or GraphQL) | ✗ (approval state needs `/approvals`) | ✗ (separate `/reviews` call) |
 | `CI/check status` | ✗ (separate `/check-runs` call) | ✓ inline via `head_pipeline` | ✗ (separate Gitea Actions call) |
-| `mergeable` | ✓ (`mergeable`, `mergeable_state`) | ✓ (`detailed_merge_status`) | ✓ (`mergeable`) |
-| `comments count` | ✓ | ✓ (`user_notes_count`) | ✓ (`comments`) |
+| `mergeable` | ✗ (detail endpoint only; GitHub does not compute mergeability at list time — set to `MergeableStateUnknown` by the GitHub adapter) | ✓ (`detailed_merge_status`) | ✓ (`mergeable`) |
+| `comments count` | ✗ (detail endpoint only; go-github explicitly marks `Comments` as not populated by List — set to 0 by the GitHub adapter) | ✓ (`user_notes_count`) | ✓ (`comments`) |
 | `commits count` | ✗ (detail endpoint) | ✗ (detail endpoint) | ✗ (detail endpoint) |
 | `changed files count` | ✗ (detail endpoint) | ✗ (detail endpoint) | ✗ (detail endpoint) |
 

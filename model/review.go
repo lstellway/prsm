@@ -29,6 +29,42 @@ type ReviewerState struct {
 	Decision ReviewDecision
 }
 
+// ComputeAggregateReviewState derives the rolled-up verdict from a set of loaded
+// reviewer decisions. Priority: ChangesRequested > Pending > Approved > Commented.
+// Called by consumers after a LoadReviewerStates call resolves.
+func ComputeAggregateReviewState(states []ReviewerState) AggregateReviewState {
+	if len(states) == 0 {
+		return AggregateReviewStateNone
+	}
+
+	var hasChangesRequested, hasApproved, hasCommented, hasPending bool
+	for _, s := range states {
+		switch s.Decision {
+		case ReviewDecisionChangesRequested:
+			hasChangesRequested = true
+		case ReviewDecisionApproved:
+			hasApproved = true
+		case ReviewDecisionCommented:
+			hasCommented = true
+		case ReviewDecisionPending:
+			hasPending = true
+		}
+	}
+
+	switch {
+	case hasChangesRequested:
+		return AggregateReviewStateChangesRequested
+	case hasPending:
+		return AggregateReviewStateRequired
+	case hasApproved:
+		return AggregateReviewStateApproved
+	case hasCommented:
+		return AggregateReviewStateCommented
+	default:
+		return AggregateReviewStateNone
+	}
+}
+
 // ReviewSummary is the full review picture for a PR.
 type ReviewSummary struct {
 	// RequestedReviewers is populated from the list API for providers that return it.

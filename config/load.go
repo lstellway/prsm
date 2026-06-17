@@ -74,6 +74,11 @@ func validate(cfg *Config, origTokens, origPasswords []string) error {
 		}
 		seen[p.Name] = true
 
+		// base_url must use HTTPS to prevent PAT exfiltration over plaintext.
+		if p.BaseURL != "" && !strings.HasPrefix(p.BaseURL, "https://") {
+			return fmt.Errorf("config: provider %q: base_url must use https:// (got %q)", p.Name, p.BaseURL)
+		}
+
 		// Rule 8: empty token after env var expansion.
 		if i < len(origTokens) {
 			orig := origTokens[i]
