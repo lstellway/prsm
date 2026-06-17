@@ -6,6 +6,17 @@ import (
 	"github.com/lstellway/prsm/model"
 )
 
+// RepoRef identifies a repository to poll within a provider.
+type RepoRef struct {
+	Owner string
+	Repo  string
+}
+
+// GroupRef identifies a GitLab group or namespace to poll.
+type GroupRef struct {
+	Path string
+}
+
 // ProviderAdapter is the contract for all provider implementations.
 // Each method corresponds to one layer of the lazy-fetch model from ADR-004.
 type ProviderAdapter interface {
