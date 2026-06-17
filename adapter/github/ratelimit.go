@@ -39,5 +39,13 @@ func checkRateLimit(instance model.ProviderInstance, resp *http.Response) error 
 		}
 	}
 
+	// Cap RetryAfter to 1 hour: a server-supplied value beyond this is either
+	// a mistake or adversarial. ADR-003 specifies the poller will sleep until
+	// RetryAfter, so an uncapped value would freeze polling indefinitely.
+	const maxRetryAfter = time.Hour
+	if !rl.RetryAfter.IsZero() && rl.RetryAfter.After(time.Now().Add(maxRetryAfter)) {
+		rl.RetryAfter = time.Now().Add(maxRetryAfter)
+	}
+
 	return rl
 }

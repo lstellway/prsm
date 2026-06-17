@@ -132,6 +132,13 @@ func TestLoadCI(t *testing.T) {
 	}
 
 	t.Logf("CI status: state=%q summary=%q", ci.State, ci.Summary)
+
+	if ci.State != model.CIStateNone &&
+		ci.State != model.CIStatePassing &&
+		ci.State != model.CIStatePending &&
+		ci.State != model.CIStateFailing {
+		t.Errorf("unexpected CI state: %q", ci.State)
+	}
 }
 
 func TestLoadReviewerStates(t *testing.T) {
@@ -151,14 +158,21 @@ func TestLoadReviewerStates(t *testing.T) {
 	}
 
 	t.Logf("reviewer states count: %d", len(states))
+
+	for i, s := range states {
+		if s.Reviewer.Username == "" {
+			t.Errorf("states[%d].Reviewer.Username is empty", i)
+		}
+	}
 }
 
-func TestETagConditionalRequest(t *testing.T) {
+func TestListPullRequestsResultConsistency(t *testing.T) {
 	a := newTestAdapter(t)
 
 	ctx := context.Background()
 
-	// First call — REST GET, httpcache stores the response and ETag.
+	// First call — makes two calls back-to-back and verifies the result sets match;
+	// cache behavior is tested in unit tests.
 	prs1, err := a.ListPullRequests(ctx)
 	if err != nil {
 		t.Fatalf("first ListPullRequests: %v", err)
@@ -191,5 +205,5 @@ func TestETagConditionalRequest(t *testing.T) {
 			t.Errorf("PR %s appeared in second call but not first — unexpected list change", pr.ProviderID)
 		}
 	}
-	t.Logf("ETag conditional request: both calls returned %d PRs with matching IDs", len(prs1))
+	t.Logf("result consistency: both calls returned %d PRs with matching IDs", len(prs1))
 }

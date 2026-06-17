@@ -41,7 +41,7 @@ func normalizePR(pr *gogithub.PullRequest, owner, repo string, instance model.Pr
 		result.MergedAt = &cp
 	}
 
-	result.State = normalizePRState(pr.GetState(), pr.GetDraft())
+	result.State = normalizePRState(pr.GetState(), pr.GetDraft(), result.MergedAt != nil)
 	result.Author = normalizeIdentity(pr.GetUser().GetLogin(), "", pr.GetUser().GetAvatarURL())
 	result.Labels = normalizeLabels(pr.Labels)
 	result.Reviews = normalizeReviewSummary(pr.RequestedReviewers)
@@ -49,7 +49,12 @@ func normalizePR(pr *gogithub.PullRequest, owner, repo string, instance model.Pr
 	return result
 }
 
-func normalizePRState(state string, isDraft bool) model.PRState {
+func normalizePRState(state string, isDraft bool, isMerged bool) model.PRState {
+	// isMerged is checked first: merged_at is the authoritative signal since
+	// GitHub's list endpoint returns state="closed" for merged PRs.
+	if isMerged {
+		return model.PRStateMerged
+	}
 	if isDraft {
 		return model.PRStateDraft
 	}
@@ -58,8 +63,6 @@ func normalizePRState(state string, isDraft bool) model.PRState {
 		return model.PRStateOpen
 	case "CLOSED":
 		return model.PRStateClosed
-	case "MERGED":
-		return model.PRStateMerged
 	default:
 		return model.PRStateOpen
 	}
@@ -118,40 +121,6 @@ func normalizeReviewSummary(reviewers []*gogithub.User) model.ReviewSummary {
 	}
 
 	return rs
-}
-
-// normalizeAggregateState computes AggregateReviewState from loaded reviewer decisions.
-func normalizeAggregateState(states []model.ReviewerState) model.AggregateReviewState {
-	if len(states) == 0 {
-		return model.AggregateReviewStateNone
-	}
-
-	var hasChangesRequested, hasApproved, hasCommented, hasPending bool
-	for _, s := range states {
-		switch s.Decision {
-		case model.ReviewDecisionChangesRequested:
-			hasChangesRequested = true
-		case model.ReviewDecisionApproved:
-			hasApproved = true
-		case model.ReviewDecisionCommented:
-			hasCommented = true
-		case model.ReviewDecisionPending:
-			hasPending = true
-		}
-	}
-
-	switch {
-	case hasChangesRequested:
-		return model.AggregateReviewStateChangesRequested
-	case hasPending:
-		return model.AggregateReviewStateRequired
-	case hasApproved:
-		return model.AggregateReviewStateApproved
-	case hasCommented:
-		return model.AggregateReviewStateCommented
-	default:
-		return model.AggregateReviewStateNone
-	}
 }
 
 // normalizeCIStatus maps GitHub check run conclusions to CIStatus.

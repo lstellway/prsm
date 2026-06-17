@@ -198,9 +198,9 @@ func TestNormalizeAggregateState(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := normalizeAggregateState(tc.states)
+			got := model.ComputeAggregateReviewState(tc.states)
 			if got != tc.want {
-				t.Errorf("normalizeAggregateState = %q, want %q", got, tc.want)
+				t.Errorf("ComputeAggregateReviewState = %q, want %q", got, tc.want)
 			}
 		})
 	}
@@ -425,24 +425,28 @@ func TestCheckRateLimit(t *testing.T) {
 
 func TestNormalizePRState(t *testing.T) {
 	cases := []struct {
-		state   string
-		isDraft bool
-		want    model.PRState
+		state    string
+		isDraft  bool
+		isMerged bool
+		want     model.PRState
 	}{
-		{"OPEN", false, model.PRStateOpen},
-		{"CLOSED", false, model.PRStateClosed},
-		{"MERGED", false, model.PRStateMerged},
-		{"open", false, model.PRStateOpen},   // case-insensitive
-		{"OPEN", true, model.PRStateDraft},   // draft overrides state
-		{"CLOSED", true, model.PRStateDraft}, // draft overrides even closed
-		{"UNKNOWN", false, model.PRStateOpen},
-		{"", false, model.PRStateOpen},
+		{"OPEN", false, false, model.PRStateOpen},
+		{"CLOSED", false, false, model.PRStateClosed},
+		// GitHub list endpoint returns state="closed" with merged_at set for merged PRs.
+		{"CLOSED", false, true, model.PRStateMerged},
+		{"open", false, false, model.PRStateOpen},   // case-insensitive
+		{"OPEN", true, false, model.PRStateDraft},   // draft overrides open state
+		{"CLOSED", true, false, model.PRStateDraft}, // draft+closed (unreachable via GitHub API)
+		{"OPEN", false, true, model.PRStateMerged},  // isMerged wins over all states
+		{"UNKNOWN", false, false, model.PRStateOpen},
+		{"", false, false, model.PRStateOpen},
 	}
 	for _, tc := range cases {
-		t.Run(tc.state+"_draft="+strconv.FormatBool(tc.isDraft), func(t *testing.T) {
-			got := normalizePRState(tc.state, tc.isDraft)
+		name := tc.state + "_draft=" + strconv.FormatBool(tc.isDraft) + "_merged=" + strconv.FormatBool(tc.isMerged)
+		t.Run(name, func(t *testing.T) {
+			got := normalizePRState(tc.state, tc.isDraft, tc.isMerged)
 			if got != tc.want {
-				t.Errorf("normalizePRState(%q, %v) = %q, want %q", tc.state, tc.isDraft, got, tc.want)
+				t.Errorf("normalizePRState(%q, %v, %v) = %q, want %q", tc.state, tc.isDraft, tc.isMerged, got, tc.want)
 			}
 		})
 	}
@@ -539,4 +543,386 @@ func TestNormalizeIdentity(t *testing.T) {
 			t.Errorf("Username = %q, want %q", got.Username, "alice")
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// normalizePR
+// ---------------------------------------------------------------------------
+
+func TestNormalizePR(t *testing.T) {
+	instance := model.ProviderInstance{
+		Name: "gh-personal",
+		Kind: model.ProviderGitHub,
+		Host: "github.com",
+	}
+
+	baseTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+	updatedTime := time.Date(2024, 1, 16, 12, 0, 0, 0, time.UTC)
+	mergedTime := time.Date(2024, 1, 17, 8, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name  string
+		pr    *gogithub.PullRequest
+		check func(t *testing.T, got model.PullRequest)
+	}{
+		{
+			name: "fully_populated",
+			pr: &gogithub.PullRequest{
+				NodeID:  ptr("PR_abc123"),
+				Number:  ptr(42),
+				Title:   ptr("Add feature X"),
+				HTMLURL: ptr("https://github.com/acme/repo/pull/42"),
+				Body:    ptr("This PR adds feature X"),
+				Head: &gogithub.PullRequestBranch{
+					Ref: ptr("feature/x"),
+					SHA: ptr("deadbeef"),
+				},
+				Base: &gogithub.PullRequestBranch{
+					Ref: ptr("main"),
+				},
+				User: &gogithub.User{
+					Login:     ptr("alice"),
+					AvatarURL: ptr("https://avatars.githubusercontent.com/alice"),
+				},
+				Labels: []*gogithub.Label{
+					{Name: ptr("bug"), Color: ptr("d73a4a")},
+				},
+				State:     ptr("open"),
+				Draft:     ptr(false),
+				CreatedAt: &gogithub.Timestamp{Time: baseTime},
+				UpdatedAt: &gogithub.Timestamp{Time: updatedTime},
+			},
+			check: func(t *testing.T, got model.PullRequest) {
+				if got.ProviderID != "PR_abc123" {
+					t.Errorf("ProviderID = %q, want %q", got.ProviderID, "PR_abc123")
+				}
+				if got.Number != 42 {
+					t.Errorf("Number = %d, want 42", got.Number)
+				}
+				if got.Title != "Add feature X" {
+					t.Errorf("Title = %q, want %q", got.Title, "Add feature X")
+				}
+				if got.URL != "https://github.com/acme/repo/pull/42" {
+					t.Errorf("URL = %q", got.URL)
+				}
+				if got.Body != "This PR adds feature X" {
+					t.Errorf("Body = %q", got.Body)
+				}
+				if got.SourceBranch != "feature/x" {
+					t.Errorf("SourceBranch = %q, want %q", got.SourceBranch, "feature/x")
+				}
+				if got.TargetBranch != "main" {
+					t.Errorf("TargetBranch = %q, want %q", got.TargetBranch, "main")
+				}
+				if got.HeadSHA != "deadbeef" {
+					t.Errorf("HeadSHA = %q, want %q", got.HeadSHA, "deadbeef")
+				}
+				if got.Author.Username != "alice" {
+					t.Errorf("Author.Username = %q, want %q", got.Author.Username, "alice")
+				}
+				if len(got.Labels) != 1 {
+					t.Fatalf("len(Labels) = %d, want 1", len(got.Labels))
+				}
+				if got.CreatedAt != baseTime {
+					t.Errorf("CreatedAt = %v, want %v", got.CreatedAt, baseTime)
+				}
+				if got.UpdatedAt != updatedTime {
+					t.Errorf("UpdatedAt = %v, want %v", got.UpdatedAt, updatedTime)
+				}
+				if got.Repo.Owner != "acme" {
+					t.Errorf("Repo.Owner = %q, want %q", got.Repo.Owner, "acme")
+				}
+				if got.Repo.Name != "repo" {
+					t.Errorf("Repo.Name = %q, want %q", got.Repo.Name, "repo")
+				}
+				if got.Provider.Kind != model.ProviderGitHub {
+					t.Errorf("Provider.Kind = %q, want %q", got.Provider.Kind, model.ProviderGitHub)
+				}
+				if got.Provider.Name != "gh-personal" {
+					t.Errorf("Provider.Name = %q, want %q", got.Provider.Name, "gh-personal")
+				}
+				if !got.CI.IsPending() {
+					t.Errorf("CI should be Pending")
+				}
+				if !got.Diff.IsPending() {
+					t.Errorf("Diff should be Pending")
+				}
+				if !got.Reviews.ReviewerStates.IsPending() {
+					t.Errorf("Reviews.ReviewerStates should be Pending")
+				}
+				if got.Reviews.AggregateState != model.AggregateReviewStateNone {
+					t.Errorf("AggregateState = %q, want None (no requested reviewers)", got.Reviews.AggregateState)
+				}
+			},
+		},
+		{
+			name: "draft_pr",
+			pr: &gogithub.PullRequest{
+				State: ptr("open"),
+				Draft: ptr(true),
+				Head:  &gogithub.PullRequestBranch{},
+				Base:  &gogithub.PullRequestBranch{},
+				User:  &gogithub.User{},
+			},
+			check: func(t *testing.T, got model.PullRequest) {
+				if got.State != model.PRStateDraft {
+					t.Errorf("State = %q, want %q", got.State, model.PRStateDraft)
+				}
+			},
+		},
+		{
+			name: "merged_pr",
+			pr: &gogithub.PullRequest{
+				State:    ptr("closed"),
+				Draft:    ptr(false),
+				MergedAt: &gogithub.Timestamp{Time: mergedTime},
+				Head:     &gogithub.PullRequestBranch{},
+				Base:     &gogithub.PullRequestBranch{},
+				User:     &gogithub.User{},
+			},
+			check: func(t *testing.T, got model.PullRequest) {
+				if got.State != model.PRStateMerged {
+					t.Errorf("State = %q, want %q", got.State, model.PRStateMerged)
+				}
+				if got.MergedAt == nil {
+					t.Fatal("MergedAt should be non-nil for a merged PR")
+				}
+				if !got.MergedAt.Equal(mergedTime) {
+					t.Errorf("MergedAt = %v, want %v", *got.MergedAt, mergedTime)
+				}
+			},
+		},
+		{
+			name: "open_pr_no_merged_at",
+			pr: &gogithub.PullRequest{
+				State: ptr("open"),
+				Draft: ptr(false),
+				Head:  &gogithub.PullRequestBranch{},
+				Base:  &gogithub.PullRequestBranch{},
+				User:  &gogithub.User{},
+			},
+			check: func(t *testing.T, got model.PullRequest) {
+				if got.State != model.PRStateOpen {
+					t.Errorf("State = %q, want %q", got.State, model.PRStateOpen)
+				}
+				if got.MergedAt != nil {
+					t.Errorf("MergedAt should be nil for open PR, got %v", got.MergedAt)
+				}
+			},
+		},
+		{
+			name: "with_requested_reviewers",
+			pr: &gogithub.PullRequest{
+				State: ptr("open"),
+				Draft: ptr(false),
+				Head:  &gogithub.PullRequestBranch{},
+				Base:  &gogithub.PullRequestBranch{},
+				User:  &gogithub.User{},
+				RequestedReviewers: []*gogithub.User{
+					{Login: ptr("bob"), AvatarURL: ptr("https://avatars.githubusercontent.com/bob")},
+					{Login: ptr("carol"), AvatarURL: ptr("https://avatars.githubusercontent.com/carol")},
+				},
+			},
+			check: func(t *testing.T, got model.PullRequest) {
+				if len(got.Reviews.RequestedReviewers) != 2 {
+					t.Fatalf("len(RequestedReviewers) = %d, want 2", len(got.Reviews.RequestedReviewers))
+				}
+				for i, rr := range got.Reviews.RequestedReviewers {
+					if rr.Decision != model.ReviewDecisionPending {
+						t.Errorf("RequestedReviewers[%d].Decision = %q, want Pending", i, rr.Decision)
+					}
+				}
+				if got.Reviews.AggregateState != model.AggregateReviewStateRequired {
+					t.Errorf("AggregateState = %q, want %q", got.Reviews.AggregateState, model.AggregateReviewStateRequired)
+				}
+			},
+		},
+		{
+			name: "no_requested_reviewers",
+			pr: &gogithub.PullRequest{
+				State:              ptr("open"),
+				Draft:              ptr(false),
+				Head:               &gogithub.PullRequestBranch{},
+				Base:               &gogithub.PullRequestBranch{},
+				User:               &gogithub.User{},
+				RequestedReviewers: nil,
+			},
+			check: func(t *testing.T, got model.PullRequest) {
+				if got.Reviews.RequestedReviewers != nil {
+					t.Errorf("RequestedReviewers should be nil, got %v", got.Reviews.RequestedReviewers)
+				}
+				if got.Reviews.AggregateState != model.AggregateReviewStateNone {
+					t.Errorf("AggregateState = %q, want None", got.Reviews.AggregateState)
+				}
+			},
+		},
+		{
+			name: "label_color_gets_hash_prefix",
+			pr: &gogithub.PullRequest{
+				State: ptr("open"),
+				Draft: ptr(false),
+				Head:  &gogithub.PullRequestBranch{},
+				Base:  &gogithub.PullRequestBranch{},
+				User:  &gogithub.User{},
+				Labels: []*gogithub.Label{
+					{Name: ptr("urgent"), Color: ptr("ff0000")},
+				},
+			},
+			check: func(t *testing.T, got model.PullRequest) {
+				if len(got.Labels) != 1 {
+					t.Fatalf("len(Labels) = %d, want 1", len(got.Labels))
+				}
+				if got.Labels[0].Color != "#ff0000" {
+					t.Errorf("Label.Color = %q, want %q", got.Labels[0].Color, "#ff0000")
+				}
+			},
+		},
+		{
+			name: "lazy_fields_are_pending",
+			pr: &gogithub.PullRequest{
+				State: ptr("open"),
+				Draft: ptr(false),
+				Head:  &gogithub.PullRequestBranch{},
+				Base:  &gogithub.PullRequestBranch{},
+				User:  &gogithub.User{},
+			},
+			check: func(t *testing.T, got model.PullRequest) {
+				if !got.CI.IsPending() {
+					t.Errorf("CI.IsPending() = false, want true")
+				}
+				if !got.Diff.IsPending() {
+					t.Errorf("Diff.IsPending() = false, want true")
+				}
+				if !got.Reviews.ReviewerStates.IsPending() {
+					t.Errorf("Reviews.ReviewerStates.IsPending() = false, want true")
+				}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := normalizePR(tc.pr, "acme", "repo", instance)
+			tc.check(t, got)
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// normalizeReviewSummary
+// ---------------------------------------------------------------------------
+
+func TestNormalizeReviewSummary(t *testing.T) {
+	cases := []struct {
+		name      string
+		reviewers []*gogithub.User
+		check     func(t *testing.T, got model.ReviewSummary)
+	}{
+		{
+			name:      "nil_reviewers",
+			reviewers: nil,
+			check: func(t *testing.T, got model.ReviewSummary) {
+				if !got.ReviewerStates.IsPending() {
+					t.Errorf("ReviewerStates.IsPending() = false, want true")
+				}
+				if got.AggregateState != model.AggregateReviewStateNone {
+					t.Errorf("AggregateState = %q, want None", got.AggregateState)
+				}
+				if got.RequestedReviewers != nil {
+					t.Errorf("RequestedReviewers should be nil, got %v", got.RequestedReviewers)
+				}
+			},
+		},
+		{
+			name:      "empty_reviewers",
+			reviewers: []*gogithub.User{},
+			check: func(t *testing.T, got model.ReviewSummary) {
+				if !got.ReviewerStates.IsPending() {
+					t.Errorf("ReviewerStates.IsPending() = false, want true")
+				}
+				if got.AggregateState != model.AggregateReviewStateNone {
+					t.Errorf("AggregateState = %q, want None", got.AggregateState)
+				}
+				if got.RequestedReviewers != nil {
+					t.Errorf("RequestedReviewers should be nil, got %v", got.RequestedReviewers)
+				}
+			},
+		},
+		{
+			name: "single_reviewer",
+			reviewers: []*gogithub.User{
+				{Login: ptr("bob"), AvatarURL: ptr("https://avatars.githubusercontent.com/bob")},
+			},
+			check: func(t *testing.T, got model.ReviewSummary) {
+				if len(got.RequestedReviewers) != 1 {
+					t.Fatalf("len(RequestedReviewers) = %d, want 1", len(got.RequestedReviewers))
+				}
+				rr := got.RequestedReviewers[0]
+				if rr.Reviewer.Username != "bob" {
+					t.Errorf("Username = %q, want %q", rr.Reviewer.Username, "bob")
+				}
+				if rr.Reviewer.AvatarURL != "https://avatars.githubusercontent.com/bob" {
+					t.Errorf("AvatarURL = %q", rr.Reviewer.AvatarURL)
+				}
+				if rr.Decision != model.ReviewDecisionPending {
+					t.Errorf("Decision = %q, want Pending", rr.Decision)
+				}
+				if got.AggregateState != model.AggregateReviewStateRequired {
+					t.Errorf("AggregateState = %q, want Required", got.AggregateState)
+				}
+				if !got.ReviewerStates.IsPending() {
+					t.Errorf("ReviewerStates.IsPending() = false, want true")
+				}
+			},
+		},
+		{
+			name: "reviewer_empty_login_skipped",
+			reviewers: []*gogithub.User{
+				{Login: ptr(""), AvatarURL: ptr("https://avatars.githubusercontent.com/ghost")},
+			},
+			check: func(t *testing.T, got model.ReviewSummary) {
+				if got.RequestedReviewers != nil {
+					t.Errorf("RequestedReviewers should be nil for empty-login reviewer, got %v", got.RequestedReviewers)
+				}
+			},
+		},
+		{
+			name: "multiple_reviewers",
+			reviewers: []*gogithub.User{
+				{Login: ptr("alice")},
+				{Login: ptr("bob")},
+				{Login: ptr("carol")},
+			},
+			check: func(t *testing.T, got model.ReviewSummary) {
+				if len(got.RequestedReviewers) != 3 {
+					t.Fatalf("len(RequestedReviewers) = %d, want 3", len(got.RequestedReviewers))
+				}
+				if got.AggregateState != model.AggregateReviewStateRequired {
+					t.Errorf("AggregateState = %q, want Required", got.AggregateState)
+				}
+			},
+		},
+		{
+			name: "display_name_falls_back_to_login",
+			reviewers: []*gogithub.User{
+				{Login: ptr("dave")},
+			},
+			check: func(t *testing.T, got model.ReviewSummary) {
+				if len(got.RequestedReviewers) != 1 {
+					t.Fatalf("len(RequestedReviewers) = %d, want 1", len(got.RequestedReviewers))
+				}
+				rr := got.RequestedReviewers[0]
+				if rr.Reviewer.DisplayName != "dave" {
+					t.Errorf("DisplayName = %q, want %q (should fall back to login)", rr.Reviewer.DisplayName, "dave")
+				}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := normalizeReviewSummary(tc.reviewers)
+			tc.check(t, got)
+		})
+	}
 }

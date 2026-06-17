@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 
 	gogithub "github.com/google/go-github/v88/github"
@@ -22,7 +23,8 @@ const defaultAPIBaseURL = "https://api.github.com"
 // GitHubAdapter is the prsm provider adapter for GitHub.
 type GitHubAdapter struct {
 	providerName string
-	instance     model.ProviderInstance
+	instance     model.ProviderInstance // immutable after New(); Account is excluded
+	account      string                 // populated by ResolveIdentity; kept separate to avoid data races
 	repos        []config.RepoRef
 	rest         *gogithub.Client
 }
@@ -74,7 +76,13 @@ func New(cfg config.ProviderConfig) (*GitHubAdapter, error) {
 func (a *GitHubAdapter) Kind() model.ProviderKind { return model.ProviderGitHub }
 
 // Instance returns the full ProviderInstance this adapter serves.
-func (a *GitHubAdapter) Instance() model.ProviderInstance { return a.instance }
+// Account is composed at call time from the separately stored account field so
+// that callers always see the value set by ResolveIdentity without a data race.
+func (a *GitHubAdapter) Instance() model.ProviderInstance {
+	inst := a.instance
+	inst.Account = a.account
+	return inst
+}
 
 // ResolveIdentity returns the authenticated user's identity and populates
 // Instance().Account with the resolved GitHub login for "me" sentinel resolution.
@@ -83,7 +91,7 @@ func (a *GitHubAdapter) ResolveIdentity(ctx context.Context) (model.Identity, er
 	if err != nil {
 		return model.Identity{}, fmt.Errorf("github %q: resolve identity: %w", a.providerName, err)
 	}
-	if err := checkRateLimit(a.instance, resp.Response); err != nil {
+	if err := checkRateLimit(a.Instance(), resp.Response); err != nil {
 		return model.Identity{}, err
 	}
 
@@ -91,7 +99,7 @@ func (a *GitHubAdapter) ResolveIdentity(ctx context.Context) (model.Identity, er
 	if name == "" {
 		name = user.GetLogin()
 	}
-	a.instance.Account = user.GetLogin()
+	a.account = user.GetLogin()
 	return model.Identity{
 		Username:    user.GetLogin(),
 		DisplayName: name,
@@ -136,12 +144,12 @@ func (a *GitHubAdapter) listRepoPRs(ctx context.Context, owner, repo string) ([]
 		if err != nil {
 			return nil, fmt.Errorf("github %q: list PRs %s/%s: %w", a.providerName, owner, repo, err)
 		}
-		if rlErr := checkRateLimit(a.instance, resp.Response); rlErr != nil {
+		if rlErr := checkRateLimit(a.Instance(), resp.Response); rlErr != nil {
 			return nil, rlErr
 		}
 
 		for _, pr := range prs {
-			all = append(all, normalizePR(pr, owner, repo, a.instance))
+			all = append(all, normalizePR(pr, owner, repo, a.Instance()))
 		}
 
 		if resp.NextPage == 0 {
@@ -159,19 +167,26 @@ func (a *GitHubAdapter) LoadCI(ctx context.Context, pr model.PullRequest) (model
 		return model.CIStatus{State: model.CIStateNone}, nil
 	}
 
+	// 50 pages × 100 runs = 5,000 check runs maximum per SHA.
+	const maxPages = 50
+
 	opts := &gogithub.ListCheckRunsOptions{
 		ListOptions: gogithub.ListOptions{PerPage: 100},
 	}
 
 	var allRuns []*gogithub.CheckRun
-	for {
+	for page := 1; ; page++ {
+		if page > maxPages {
+			return model.CIStatus{}, fmt.Errorf("github %q: load CI for %s#%d: exceeded %d-page limit",
+				a.providerName, pr.Repo.Name, pr.Number, maxPages)
+		}
 		runs, resp, err := a.rest.Checks.ListCheckRunsForRef(
 			ctx, pr.Repo.Owner, pr.Repo.Name, pr.HeadSHA, opts)
 		if err != nil {
 			return model.CIStatus{}, fmt.Errorf("github %q: load CI for %s#%d: %w",
 				a.providerName, pr.Repo.Name, pr.Number, err)
 		}
-		if rlErr := checkRateLimit(a.instance, resp.Response); rlErr != nil {
+		if rlErr := checkRateLimit(a.Instance(), resp.Response); rlErr != nil {
 			return model.CIStatus{}, rlErr
 		}
 		allRuns = append(allRuns, runs.CheckRuns...)
@@ -186,17 +201,24 @@ func (a *GitHubAdapter) LoadCI(ctx context.Context, pr model.PullRequest) (model
 
 // LoadReviewerStates fetches individual review decisions for a PR via REST.
 func (a *GitHubAdapter) LoadReviewerStates(ctx context.Context, pr model.PullRequest) ([]model.ReviewerState, error) {
+	// 50 pages × 100 reviews = 5,000 reviews maximum per PR.
+	const maxPages = 50
+
 	opts := &gogithub.ListOptions{PerPage: 100}
 	var allReviews []*gogithub.PullRequestReview
 
-	for {
+	for page := 1; ; page++ {
+		if page > maxPages {
+			return nil, fmt.Errorf("github %q: load reviews for %s#%d: exceeded %d-page limit",
+				a.providerName, pr.Repo.Name, pr.Number, maxPages)
+		}
 		reviews, resp, err := a.rest.PullRequests.ListReviews(
 			ctx, pr.Repo.Owner, pr.Repo.Name, pr.Number, opts)
 		if err != nil {
 			return nil, fmt.Errorf("github %q: load reviews for %s#%d: %w",
 				a.providerName, pr.Repo.Name, pr.Number, err)
 		}
-		if rlErr := checkRateLimit(a.instance, resp.Response); rlErr != nil {
+		if rlErr := checkRateLimit(a.Instance(), resp.Response); rlErr != nil {
 			return nil, rlErr
 		}
 		allReviews = append(allReviews, reviews...)
@@ -216,7 +238,7 @@ func (a *GitHubAdapter) LoadDiff(ctx context.Context, pr model.PullRequest) (mod
 		return model.DiffStats{}, fmt.Errorf("github %q: load diff for %s#%d: %w",
 			a.providerName, pr.Repo.Name, pr.Number, err)
 	}
-	if rlErr := checkRateLimit(a.instance, resp.Response); rlErr != nil {
+	if rlErr := checkRateLimit(a.Instance(), resp.Response); rlErr != nil {
 		return model.DiffStats{}, rlErr
 	}
 	return model.DiffStats{
@@ -228,11 +250,10 @@ func (a *GitHubAdapter) LoadDiff(ctx context.Context, pr model.PullRequest) (mod
 }
 
 func extractHost(rawURL string) string {
-	rawURL = strings.TrimPrefix(rawURL, "https://")
-	rawURL = strings.TrimPrefix(rawURL, "http://")
-	if i := strings.Index(rawURL, "/"); i >= 0 {
-		rawURL = rawURL[:i]
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return rawURL
 	}
-	return rawURL
+	return u.Hostname()
 }
 
