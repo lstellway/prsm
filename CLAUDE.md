@@ -61,6 +61,8 @@ Resource types are first-class equals. Adding a new resource type means defining
 - **k9s** — TUI for Kubernetes; the gold standard for resource-oriented terminal UIs. Uses tview/tcell internally.
 - **lazygit** — 76k stars; proof that terminal-native developer tools achieve massive adoption via dotfiles/word-of-mouth. Design model for keybindings and multi-panel layout. Uses a custom gocui fork.
 - **herdr** — TUI for infrastructure management; built with Ratatui.
+- **lazyworktree** — Go + Bubble Tea TUI for managing git worktrees; surfaces CI/PR status per worktree. Closest reference for the v1 stack (ADR-001) and a working example of rendering CI/PR state in Bubble Tea.
+- **gitui** — 22k-star Rust/Ratatui git TUI; benchmark for speed on huge repos (Linux kernel in seconds) and keyboard-only, async-first navigation. Reference for the "speed as a constraint" principle and responsive async data loading.
 - **Superhuman** — proof that triage-as-a-product is a viable, high-value category. "Split inboxes," speed as a first-class constraint, attention routing as the core job.
 - The "PR inbox" mental model — prsm is an email client for pull requests: every item has a defined next action, sections surface priority signals before general triage.
 
