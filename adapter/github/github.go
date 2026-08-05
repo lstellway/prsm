@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 
 	gogithub "github.com/google/go-github/v88/github"
@@ -43,7 +44,7 @@ type GitHubAdapter struct {
 // The token in cfg.Token must already be expanded (no "$VAR" references).
 func New(cfg Config) (*GitHubAdapter, error) {
 	if cfg.Token == "" {
-		return nil, fmt.Errorf("github adapter %q: auth.token is required", cfg.Name)
+		return nil, fmt.Errorf("github adapter %q: token is required", cfg.Name)
 	}
 
 	httpClient := newHTTPClient(cfg.Token)
@@ -77,7 +78,10 @@ func New(cfg Config) (*GitHubAdapter, error) {
 			Host: host,
 			// Account is populated by ResolveIdentity once called at startup.
 		},
-		repos: cfg.Repos,
+		// Cloned so a caller mutating its own slice after New() cannot reach
+		// adapter state. New() is callable without the config layer, so the
+		// caller is not guaranteed to hand over a freshly built slice.
+		repos: slices.Clone(cfg.Repos),
 		rest:  restClient,
 	}, nil
 }
