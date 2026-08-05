@@ -17,23 +17,35 @@ Engineers on fast-moving teams miss PR review requests — buried in Slack threa
 
 ## Architecture
 
-Four layers with strict downward-only dependencies:
+Five layers with strict downward-only dependencies, plus a shared assembly layer between them and the consumers:
 
 ```
-Provider Adapters  →  Resource Model  →  Query Layer  →  Consumers
+Provider Adapters  →  Resource Model  →  Query Layer  →  Event Engine  →  Assembly  →  Consumers
 ```
 
 - **Provider Adapters** — one per provider kind (GitHub, GitLab, Gitea/Forgejo). Fetches raw API data, normalizes it into the resource model. All provider-specific knowledge lives here.
 - **Resource Model** — normalized Go types (`PullRequest`, `Issue`, …). `LoadResult[T]` for lazy-fetched fields. No presentation or transport concerns.
 - **Query Layer** — resource-typed `FilterSpec`, generic `Predicate[T]`, sort and group keys. Consumer-agnostic: TUI, MCP server, HTTP API, and library all use the same pipeline.
-- **Consumers** — TUI (v1), MCP server, HTTP API, library. Each adds a thin assembly and transport layer. No consumer modifies the layers below it.
+- **Event Engine** — diffs successive snapshots into typed events and dispatches them to subscribers and shell hooks. Planned v1.1 (ADR-007).
+- **Assembly** — `package prsm` at the module root. Constructs adapters from config, resolves identities, fans out fetches, aggregates partial failures, and drives the poll cycle. Shared by every consumer; no consumer re-implements it (ADR-009).
+- **Consumers** — TUI (v1), MCP server, HTTP API, library. Each adds only transport or presentation. No consumer modifies the layers below it.
 
-See `docs/decisions/ADR-000-system-architecture.md` for the full specification.
+See `docs/decisions/ADR-000-system-architecture.md` for the full specification and `ADR-009` for the assembly layer.
+
+## Integration Surfaces
+
+prsm supports integrators through two parallel, equally first-class surfaces. They must stay semantically consistent — a snapshot means the same thing in both, including degraded-provider state.
+
+- **Go library** — `github.com/lstellway/prsm`. The integrator embeds prsm's aggregation in their own process, with their own config and credentials.
+- **Wire API** — `prsm serve`, defined by `api/proto/prsm/v1`. The integrator queries a prsm instance someone else runs. `client/` is reserved for its hand-written Go SDK.
+
+The module stays at v0.x until the TUI ships; both surfaces move to v1 together.
 
 ## Tech Stack
 
 - **Language:** Go
 - **TUI framework:** Bubble Tea v2 + Lip Gloss v2 (Charmbracelet)
+- **CLI framework:** `spf13/cobra` — see `docs/decisions/research/cli-framework.md`
 - **Config:** TOML via `github.com/BurntSushi/toml`
 - **Provider clients:** `google/go-github` (GitHub), `gitlab-org/api/client-go` (GitLab), `go-gitea/go-sdk` (Gitea/Forgejo)
 
@@ -92,17 +104,28 @@ Key decisions are documented in `docs/decisions/`. Read the relevant ADR before 
 - [ADR-006: Filtering and Grouping](docs/decisions/ADR-006-filtering-grouping.md)
 - [ADR-007: Event Engine and Hook System](docs/decisions/ADR-007-event-engine.md)
 - [ADR-008: Adapter Constructor Inputs](docs/decisions/ADR-008-adapter-constructor-inputs.md)
+- [ADR-009: Assembly Layer and Library Surface](docs/decisions/ADR-009-assembly-layer-and-library-surface.md)
+
+Exploratory research that predates or supports these decisions lives in `docs/decisions/research/` — notably `cli-framework.md` (the cobra decision), `project-structure.md`, and the multi-resource query notes. It is not indexed above because it records investigation rather than accepted decisions.
 
 ## Current State
+
+**Nothing is wired end-to-end yet.** The layers below are built and tested in isolation; no production code path constructs an adapter or fetches a pull request. The assembly layer (ADR-009) is the missing piece that connects them, and `prsm tui` currently prints "not yet implemented."
 
 | Package | Status | Description |
 |---|---|---|
 | `model/` | Done | Normalized resource types — `PullRequest`, `LoadResult[T]`, reviews, CI, diff |
-| `adapter/` | Done | Provider adapter interface + stub implementations (GitHub, GitLab, Gitea, mock) |
+| `adapter/` | Done | `ProviderAdapter` interface, shared `RepoRef`, error types |
+| `adapter/github/` | Done | Full GitHub + GHE implementation — list, CI, reviews, diff, ETag caching, rate limiting |
+| `adapter/gitlab/`, `adapter/gitea/` | Stub | `Config` structs only (pattern set by ADR-008); no constructors yet |
+| `adapter/mock/` | Done | In-memory adapter for tests |
 | `config/` | Done | TOML loader, XDG path, validation (all 8 ADR-005 rules), first-run scaffold |
-| `query/` | Stub | Filter, sort, group pipeline — not yet implemented |
-| `client/` | Stub | — |
+| `query/` | Done | Filter, sort, group, fuzzy match, `Apply` pipeline — implemented and tested |
+| `client/` | Reserved | Reserved for the wire API's Go SDK (ADR-009). Currently holds config→adapter mappers awaiting the move to `package prsm` |
+| `internal/subcommand/` | Partial | cobra commands — `tui`, `serve`, `version`; `tui` and `serve` are not yet implemented |
+| `cmd/prsm/` | Done | Thin `main` delegating to `internal/subcommand` |
+| `api/proto/` | Stub | `prsm.v1` package declared; no services or RPCs defined, no codegen configured |
 | `event/` | Stub | Event engine (planned v1.1 per ADR-007) |
 | `internal/hook/` | Stub | Shell hook runner |
+| `internal/poller/` | Stub | Empty — poll loop belongs to the assembly layer per ADR-009; remove |
 | `internal/tui/` | Stub | Bubble Tea TUI consumer |
-| `cmd/prsm/` | Stub | CLI entrypoint |

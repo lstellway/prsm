@@ -38,7 +38,7 @@ Placing the mapping in `config/` rather than the assembly layer was also rejecte
 
 3. **No adapter package may import `github.com/lstellway/prsm/config`.** This extends ADR-000's layer boundary rules, which govern the four architectural layers but do not name the config package explicitly.
 
-4. **The assembly layer (`client/`) owns the mapping** from `config.ProviderConfig` to each adapter's `Config`, and is the only package importing both sides. `config/` must not import adapter packages.
+4. **The assembly layer owns the mapping** from `config.ProviderConfig` to each adapter's `Config`, and is the only package importing both sides. `config/` must not import adapter packages. The assembly layer's package identity is *not* decided by this ADR — see ADR-009.
 
 5. **Boundary rule for the shared `adapter` package**: it holds the `ProviderAdapter` interface and types universal to all providers. Provider-specific reference types live in that provider's package. Accordingly `adapter.RepoRef` is shared — every provider polls owner/repo pairs — while `GroupRef` is GitLab-only and lives in `adapter/gitlab`.
 
@@ -57,9 +57,9 @@ Placing the mapping in `config/` rather than the assembly layer was also rejecte
 
 **Harder — accepted costs:**
 
-- **N mapping functions to maintain**, one per provider, in `client/`.
-- **`adapter.RepoRef` deliberately duplicates `config.RepoRef`.** The two are permitted to diverge; converting between them is the unavoidable tax of the layering rule. It is paid once, in `client.toRepoRefs`.
-- **Config-to-adapter drift is not compiler-checked.** A field added to `config.ProviderConfig` and mapped nowhere compiles and ships silently. Mapping tests in `client/` are therefore a required mitigation, not optional: they are the only place the field-by-field correspondence is asserted.
+- **N mapping functions to maintain**, one per provider, in the assembly layer.
+- **`adapter.RepoRef` deliberately duplicates `config.RepoRef`.** The two are permitted to diverge; converting between them is the unavoidable tax of the layering rule. It is paid once, in the assembly layer's `toRepoRefs`.
+- **Config-to-adapter drift is not compiler-checked.** A field added to `config.ProviderConfig` and mapped nowhere compiles and ships silently. Mapping tests in the assembly layer are therefore a required mitigation, not optional: they are the only place the field-by-field correspondence is asserted.
 - **Provider-incompatible config fields drop silently.** `config.ProviderConfig` is a union and `config/load.go` does not validate type-to-field compatibility, so `[[providers.groups]]` under a `type = "github"` provider yields a clean startup and an empty result set with no diagnostic. Validating that compatibility in `config/load.go` is a follow-up obligation of this decision.
 - **`Auth.Type` is currently carried by no mapper.** `config/` validates `auth.type` against `pat | oauth | basic`, but the adapter `Config` types re-derive auth mode from which credential fields are populated. Reconciling the declared auth type with the derived one is a follow-up, and must be resolved when the Gitea adapter lands, since Gitea is the only provider with two auth modes.
 
@@ -70,4 +70,5 @@ Placing the mapping in `config/` rather than the assembly layer was also rejecte
 - ADR-000: System Architecture — layer definitions and boundary rules
 - ADR-002: v1 Provider Set — why the three providers' auth and scoping models differ
 - ADR-005: Config Format — `config.ProviderConfig` and the auth types it validates
+- ADR-009: Assembly Layer and Library Surface — decides where the mapping lives, amending item 4 above
 - Linear STE-68 — the originating issue

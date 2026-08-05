@@ -76,14 +76,16 @@ A delta-detection and pub/sub layer that runs alongside the query layer. After e
 
 ### Layer 5: Consumers
 
-Consumers assemble the provider adapters, resource model, and query layer to serve a specific interface. The TUI is the first consumer.
+Consumers serve a specific interface over the shared assembly layer. The TUI is the first consumer.
 
 - **TUI (Bubble Tea v2)** — interactive terminal UI. The TUI owns the rendering loop, keybinding handling, and panel layout. It does not own the data model or query logic. The TUI also subscribes to the Event Engine to power a notifications panel.
 - **MCP server** — exposes prsm's resource data to AI agents via the Model Context Protocol. Same model and query layer as the TUI; different transport.
 - **HTTP API** — serves normalized resource data over HTTP/JSON for dashboards, scripts, and third-party integrations.
 - **Library** — exposes the provider adapters, resource model, query layer, and event stream as importable Go packages for third-party tools. Library consumers subscribe to the Event Engine directly via typed channels.
 
-Each consumer adds a thin assembly and transport layer. No consumer requires changes to the model, query layer, or adapters.
+A single shared **assembly layer** — `package prsm` at the module root — constructs provider adapters from configuration, resolves provider identities, fans out fetches, aggregates partial failures, and drives the poll cycle. Each consumer adds only a transport or presentation layer over that assembly.
+
+No consumer requires changes to the model, query layer, or adapters, and **no consumer may re-implement assembly behavior** — liveness, partial-failure, and identity semantics are specified once and shared, or prsm becomes several products wearing one name. See ADR-009 for the assembly layer's responsibilities and public surface.
 
 ### Named view definitions
 
@@ -112,10 +114,12 @@ The `resource` field is required — not optional with a default — because def
 
 ### Layer boundary rules
 
-- Adapters must not import consumer packages.
+- Adapters must not import consumer packages, and must not import the config package (ADR-008).
 - The resource model must not import adapter or consumer packages.
 - The query layer must not import adapter or consumer packages.
 - The Event Engine must not import consumer packages; it may import the resource model only.
+- The assembly layer may import adapters, model, query, event, and config. It must not import any consumer package, and must not import a UI or transport framework.
+- The config package must not import adapter packages.
 - Consumers may import all lower layers.
 - No layer may import a higher layer (no upward dependencies).
 
