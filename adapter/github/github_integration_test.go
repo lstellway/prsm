@@ -13,8 +13,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/lstellway/prsm/adapter"
 	githubadapter "github.com/lstellway/prsm/adapter/github"
-	"github.com/lstellway/prsm/config"
 	"github.com/lstellway/prsm/model"
 )
 
@@ -31,15 +31,11 @@ func newTestAdapter(t *testing.T) *githubadapter.GitHubAdapter {
 	t.Helper()
 	token := requireEnv(t, "GITHUB_TOKEN")
 
-	cfg := config.ProviderConfig{
-		Name: "github-integration-test",
-		Type: "github",
-		Auth: config.AuthConfig{
-			Type:  "pat",
-			Token: token,
-		},
+	cfg := githubadapter.Config{
+		Name:  "github-integration-test",
+		Token: token,
 		// Use a known public repo for the integration test.
-		Repos: []config.RepoRef{
+		Repos: []adapter.RepoRef{
 			{Owner: "golang", Repo: "go"},
 		},
 	}

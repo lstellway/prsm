@@ -6,6 +6,14 @@ import (
 	"github.com/lstellway/prsm/model"
 )
 
+// RepoRef identifies a repository to poll within a provider.
+// It lives here because every provider polls owner/repo pairs; provider-specific
+// reference types belong in that provider's adapter package.
+type RepoRef struct {
+	Owner string
+	Repo  string
+}
+
 // ProviderAdapter is the contract for all provider implementations.
 // Each method corresponds to one layer of the lazy-fetch model from ADR-004.
 type ProviderAdapter interface {

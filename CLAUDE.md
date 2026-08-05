@@ -91,6 +91,7 @@ Key decisions are documented in `docs/decisions/`. Read the relevant ADR before 
 - [ADR-005: Config Format](docs/decisions/ADR-005-config-format.md)
 - [ADR-006: Filtering and Grouping](docs/decisions/ADR-006-filtering-grouping.md)
 - [ADR-007: Event Engine and Hook System](docs/decisions/ADR-007-event-engine.md)
+- [ADR-008: Adapter Constructor Inputs](docs/decisions/ADR-008-adapter-constructor-inputs.md)
 
 ## Current State
 

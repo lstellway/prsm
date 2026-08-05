@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	gogithub "github.com/google/go-github/v88/github"
-	"github.com/lstellway/prsm/config"
+	"github.com/lstellway/prsm/adapter"
 	"github.com/lstellway/prsm/model"
 )
 
@@ -19,64 +19,34 @@ import (
 
 func TestNew(t *testing.T) {
 	cases := []struct {
-		name        string
-		cfg         config.ProviderConfig
-		wantErr     bool
-		wantHost    string
-		wantKind    model.ProviderKind
+		name     string
+		cfg      Config
+		wantErr  bool
+		wantHost string
+		wantKind model.ProviderKind
 	}{
 		{
-			name: "empty_token",
-			cfg: config.ProviderConfig{
-				Name: "test",
-				Type: "github",
-				Auth: config.AuthConfig{
-					Type:  "pat",
-					Token: "",
-				},
-			},
+			name:    "empty_token",
+			cfg:     Config{Name: "test", Token: ""},
 			wantErr: true,
 		},
 		{
-			name: "valid_github_com",
-			cfg: config.ProviderConfig{
-				Name: "test",
-				Type: "github",
-				Auth: config.AuthConfig{
-					Type:  "pat",
-					Token: "ghp_test_token",
-				},
-			},
+			name:     "valid_github_com",
+			cfg:      Config{Name: "test", Token: "ghp_test_token"},
 			wantErr:  false,
 			wantHost: "github.com",
 			wantKind: model.ProviderGitHub,
 		},
 		{
-			name: "enterprise_url",
-			cfg: config.ProviderConfig{
-				Name:    "test",
-				Type:    "github",
-				BaseURL: "https://ghe.example.com/api/v3",
-				Auth: config.AuthConfig{
-					Type:  "pat",
-					Token: "ghp_test_token",
-				},
-			},
+			name:     "enterprise_url",
+			cfg:      Config{Name: "test", Token: "ghp_test_token", BaseURL: "https://ghe.example.com/api/v3"},
 			wantErr:  false,
 			wantHost: "ghe.example.com",
 			wantKind: model.ProviderGitHub,
 		},
 		{
-			name: "enterprise_url_with_port",
-			cfg: config.ProviderConfig{
-				Name:    "test",
-				Type:    "github",
-				BaseURL: "https://ghe.example.com:8443",
-				Auth: config.AuthConfig{
-					Type:  "pat",
-					Token: "ghp_test_token",
-				},
-			},
+			name:     "enterprise_url_with_port",
+			cfg:      Config{Name: "test", Token: "ghp_test_token", BaseURL: "https://ghe.example.com:8443"},
 			wantErr:  false,
 			wantHost: "ghe.example.com",
 			wantKind: model.ProviderGitHub,
@@ -250,7 +220,7 @@ func TestListRepoPRsPagination(t *testing.T) {
 				Kind: model.ProviderGitHub,
 				Host: "localhost",
 			},
-			repos: []config.RepoRef{{Owner: "owner", Repo: "repo"}},
+			repos: []adapter.RepoRef{{Owner: "owner", Repo: "repo"}},
 			rest:  restClient,
 		}
 
@@ -294,7 +264,7 @@ func TestListRepoPRsPagination(t *testing.T) {
 				Kind: model.ProviderGitHub,
 				Host: "localhost",
 			},
-			repos: []config.RepoRef{{Owner: "owner", Repo: "repo"}},
+			repos: []adapter.RepoRef{{Owner: "owner", Repo: "repo"}},
 			rest:  restClient,
 		}
 

@@ -11,32 +11,43 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 
 	gogithub "github.com/google/go-github/v88/github"
-	"github.com/lstellway/prsm/config"
+	"github.com/lstellway/prsm/adapter"
 	"github.com/lstellway/prsm/model"
 )
 
 const defaultAPIBaseURL = "https://api.github.com"
+
+// Config holds the parameters needed to construct a GitHubAdapter.
+// The assembly layer maps config.ProviderConfig into this type so the adapter
+// package has no dependency on the config package.
+type Config struct {
+	Name    string
+	Token   string
+	BaseURL string
+	Repos   []adapter.RepoRef
+}
 
 // GitHubAdapter is the prsm provider adapter for GitHub.
 type GitHubAdapter struct {
 	providerName string
 	instance     model.ProviderInstance // immutable after New(); Account is excluded
 	account      string                 // populated by ResolveIdentity; kept separate to avoid data races
-	repos        []config.RepoRef
+	repos        []adapter.RepoRef
 	rest         *gogithub.Client
 }
 
-// New constructs a GitHubAdapter from a ProviderConfig.
-// The token in cfg.Auth.Token must already be expanded (no "$VAR" references).
-func New(cfg config.ProviderConfig) (*GitHubAdapter, error) {
-	if cfg.Auth.Token == "" {
-		return nil, fmt.Errorf("github adapter %q: auth.token is required", cfg.Name)
+// New constructs a GitHubAdapter from a Config.
+// The token in cfg.Token must already be expanded (no "$VAR" references).
+func New(cfg Config) (*GitHubAdapter, error) {
+	if cfg.Token == "" {
+		return nil, fmt.Errorf("github adapter %q: token is required", cfg.Name)
 	}
 
-	httpClient := newHTTPClient(cfg.Auth.Token)
+	httpClient := newHTTPClient(cfg.Token)
 
 	apiBase := strings.TrimRight(cfg.BaseURL, "/")
 	if apiBase == "" {
@@ -67,7 +78,10 @@ func New(cfg config.ProviderConfig) (*GitHubAdapter, error) {
 			Host: host,
 			// Account is populated by ResolveIdentity once called at startup.
 		},
-		repos: cfg.Repos,
+		// Cloned so a caller mutating its own slice after New() cannot reach
+		// adapter state. New() is callable without the config layer, so the
+		// caller is not guaranteed to hand over a freshly built slice.
+		repos: slices.Clone(cfg.Repos),
 		rest:  restClient,
 	}, nil
 }
