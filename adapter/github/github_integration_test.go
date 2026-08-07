@@ -167,8 +167,11 @@ func TestListPullRequestsResultConsistency(t *testing.T) {
 
 	ctx := context.Background()
 
-	// First call — makes two calls back-to-back and verifies the result sets match;
-	// cache behavior is tested in unit tests.
+	// First call — populates the httpcache store. This test only checks that two
+	// back-to-back calls against the live API agree; the conditional-request
+	// mechanics themselves (If-None-Match sent, 304 answered, list still served
+	// from cache) are asserted by TestListPullRequestsETagRevalidation in
+	// etag_test.go against an httptest server.
 	prs1, err := a.ListPullRequests(ctx)
 	if err != nil {
 		t.Fatalf("first ListPullRequests: %v", err)
