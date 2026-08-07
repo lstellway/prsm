@@ -1,6 +1,8 @@
 # prsm
 
-Engineers on fast-moving teams miss PR review requests — buried in Slack threads, invisible across providers and organizations. prsm gives them a live, filterable view of everything waiting for their attention, so nothing important gets missed.
+Engineers lose time to code resources scattered across vendors, accounts, and machines — pull requests on one host, CI runs on another, branches and worktrees on disk. prsm centralizes them into one live, filterable, keyboard-driven surface, and lets you act on them from there.
+
+v1 ships the pull-request slice; see Non-Goals.
 
 ## Name
 
@@ -8,11 +10,13 @@ Engineers on fast-moving teams miss PR review requests — buried in Slack threa
 
 ## Core Philosophy
 
-- **Resource aggregation API** — prsm's core is a provider-agnostic resource aggregation layer. Provider adapters normalize data from multiple git hosts into a unified schema. The query layer (filter, sort, group) operates on that schema. Consumers compose the model and query layers without modification.
+- **Resource aggregation API** — prsm's core is a vendor-agnostic resource aggregation layer. Adapters normalize data from many vendors — git hosts, CI systems, the local checkout — into a unified schema. The query layer (filter, sort, group) operates on that schema. Consumers compose the model and query layers without modification.
 - **TUI as first consumer, not product identity** — the terminal UI is prsm's first consumer. MCP server, HTTP API, and library distribution are first-class planned consumers, not afterthoughts. Build the resource model and query layer as if all consumers exist simultaneously.
-- **Digest over manage** — prsm tells you what needs attention and gives you the context to prioritize it. Your browser handles the actual review. Write/action features (approve, comment, merge) are a future layer, not the foundation.
-- **Generic schema** — normalize data from all providers into one internal model; views are provider-agnostic.
-- **Multi-provider** — GitHub, GitLab, Gitea/Forgejo as first-class citizens. Provider parity is a commitment, not a roadmap item.
+- **Manage, don't just watch** — every resource prsm shows, it can act on: merge, comment, label, request review, rerun, check out, close. You should not need the vendor's web UI for the routine loop.
+- **Honest about what it can't do** — capability is a property of a *connection*, not a vendor: the same Gitea at 1.19 and 1.24 answer differently. prsm probes each connection and says explicitly what is unavailable and why. Never a silent no-op, never a dead keystroke. Review authoring is the known permanent gap — GitHub reviews carry a body and a request-changes state, GitLab approvals carry neither — and prsm links out rather than pretending otherwise.
+- **Generic schema** — normalize data from all vendors into one internal model; views are vendor-agnostic.
+- **Multi-vendor, sparse by nature** — a vendor serves some resource kinds and not others. Jenkins and CircleCI have CI runs but no pull requests; the local git checkout has branches and worktrees but no host and no credential. Parity is a commitment *per resource kind* — if prsm supports pull requests on two vendors it supports them equivalently — not a claim that every vendor serves everything.
+- **Vendors are built in** — adapters compile into prsm, one per vendor. No plugin runtime. Every comparable tool that reached broad vendor coverage *with writes* did it this way (Renovate: 11 code hosts; rclone: ~70 backends). Third parties extend prsm through the wire API and config-declared shell-out actions, not by shipping vendors.
 - **Triage-oriented** — inspired by medical triage: what needs attention, what's urgent, what's blocked.
 
 ## Architecture
@@ -23,7 +27,7 @@ Five layers with strict downward-only dependencies, plus a shared assembly layer
 Provider Adapters  →  Resource Model  →  Query Layer  →  Event Engine  →  Assembly  →  Consumers
 ```
 
-- **Provider Adapters** — one per provider kind (GitHub, GitLab, Gitea/Forgejo). Fetches raw API data, normalizes it into the resource model. All provider-specific knowledge lives here.
+- **Provider Adapters** — one per vendor (GitHub, GitLab, Gitea/Forgejo, Jenkins, …, plus the local git checkout). Fetches raw data, normalizes it into the resource model, and reports what the specific connection can do. All vendor-specific knowledge lives here.
 - **Resource Model** — normalized Go types (`PullRequest`, `Issue`, …). `LoadResult[T]` for lazy-fetched fields. No presentation or transport concerns.
 - **Query Layer** — resource-typed `FilterSpec`, generic `Predicate[T]`, sort and group keys. Consumer-agnostic: TUI, MCP server, HTTP API, and library all use the same pipeline.
 - **Event Engine** — diffs successive snapshots into typed events and dispatches them to subscribers and shell hooks. Planned v1.1 (ADR-007).
@@ -59,20 +63,22 @@ Implementation order:
 2. **GitLab** (gitlab.com + self-hosted) — follows the same adapter interface
 3. **Gitea/Forgejo** — single adapter covering Gitea instances, Forgejo instances, and Codeberg
 
-Codeberg is a Forgejo instance; it does not require a separate adapter. See `docs/decisions/ADR-002-v1-providers.md`.
+Codeberg is a Forgejo instance and shares the Gitea adapter today. Forgejo forked from Gitea and their APIs are drifting; treat the shared adapter as current fact, not a permanent guarantee. See `docs/decisions/ADR-002-v1-providers.md`.
 
 ## Resource Types
 
 - **v1:** Pull requests (`PullRequest`)
-- **Planned:** Issues (`Issue`) — GitHub Issues, GitLab Issues, Gitea Issues, Jira, Linear, etc.
+- **Planned:** Actions (`Action` — CI runs, from GitHub, Gitea, Jenkins, CircleCI, …), Branches, Worktrees, Issues
 
-Resource types are first-class equals. Adding a new resource type means defining its normalized model type, a resource-typed `FilterSpec`, and provider adapter methods. No other layer changes.
+Resource types are first-class equals. Adding a new resource type means defining its normalized model type, a resource-typed `FilterSpec`, and vendor adapter methods. No other layer changes.
+
+That is the target, not the current state. The query layer is still concrete on `PullRequest` throughout; making it generic is prerequisite work, not a free extension.
 
 ## Inspiration
 
 - **k9s** — TUI for Kubernetes; the gold standard for resource-oriented terminal UIs. Uses tview/tcell internally.
 - **lazygit** — 76k stars; proof that terminal-native developer tools achieve massive adoption via dotfiles/word-of-mouth. Design model for keybindings and multi-panel layout. Uses a custom gocui fork.
-- **herdr** — TUI for infrastructure management; built with Ratatui.
+- **herdr** — Rust/Ratatui terminal multiplexer for coding-agent CLIs. Relevant for its vendor model, not its domain: per-vendor behavior lives in declarative TOML manifests that ship independently of the binary behind an engine-version handshake, while vendor *identity* stays compiled. The fallback reference if prsm's capability tables ever outgrow the release cadence.
 - **lazyworktree** — Go + Bubble Tea TUI for managing git worktrees; surfaces CI/PR status per worktree. Closest reference for the v1 stack (ADR-001) and a working example of rendering CI/PR state in Bubble Tea.
 - **gitui** — 22k-star Rust/Ratatui git TUI; benchmark for speed on huge repos (Linux kernel in seconds) and keyboard-only, async-first navigation. Reference for the "speed as a constraint" principle and responsive async data loading.
 - **Superhuman** — proof that triage-as-a-product is a viable, high-value category. "Split inboxes," speed as a first-class constraint, attention routing as the core job.
@@ -87,9 +93,10 @@ Resource types are first-class equals. Adding a new resource type means defining
 
 ## Non-Goals (v1)
 
-- Inline review actions (approve, comment, merge) — prsm surfaces what to review; the web UI does the review
-- Replacing the web UI or becoming a full GitHub/GitLab client
-- Issue resource type — architecture is designed for it; implementation is post-v1
+- Resource kinds beyond pull requests — Actions, Branches, Worktrees and Issues are all intended; only PRs ship in v1
+- Local-git resources (branches, worktrees) — the source abstraction admits an unauthenticated, hostless local source; implementation is post-v1
+- Review authoring (approve, request changes) — not normalizable across vendors. A permanent non-goal, not a sequencing one
+- A plugin runtime — vendors are compiled in
 
 ## Decisions
 
