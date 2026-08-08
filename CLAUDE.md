@@ -55,6 +55,35 @@ The module stays at v0.x until the TUI ships; both surfaces move to v1 together.
 
 See `docs/decisions/ADR-001-tech-stack.md` for rationale.
 
+## Code Conventions
+
+### Naming
+
+**Names say what the thing holds. A reader should not have to scroll up to decode a name.**
+
+This is a deliberate departure from common Go practice, which favors very short receivers and locals. prsm optimizes for a reader meeting the code cold, not for the person who just wrote it. Long names are cheap; re-deriving what `a` or `mu` means is not.
+
+- **Receivers** are named for their type, not initialed: `githubAdapter *GitHubAdapter`, `mockAdapter *MockAdapter`, `loadResult LoadResult[T]`. Never `a`, `m`, `r`, `self`, or `this`.
+- **Locals and parameters** are whole words: `mutex` not `mu`, `instance` not `inst`, `response` not `resp`, `listOptions` not `opts`, `pullRequests` not `prs`, `testCase` not `tc`, `server` not `ts`, `rateLimitErr` not `rlErr`.
+- **Struct fields** follow the same rule.
+- **Loop variables** get real names: `for _, pullRequest := range pullRequests`, `for index := range items`.
+
+**Established exceptions** — these are names in their own right, not abbreviations the reader has to expand. Do not "fix" them:
+
+- `err` — error values
+- `ctx` — `context.Context` (`context` collides with the package)
+- `ok` — the comma-ok idiom
+- Standard-library conventions where the signature is fixed by an interface, e.g. `t *testing.T`
+- Receiver-free single-expression math where a letter *is* the domain term (rare; prefer a word)
+
+**Watch for package-name collisions.** A descriptive name can shadow an imported package. `adapter` is the obvious trap — `github.com/lstellway/prsm/adapter` is imported by every adapter file, so a receiver or local named `adapter` makes `adapter.RepoRef` and `adapter.RateLimitError` unreachable in that scope. Same for `config`, `model`, `query`, `event`. Name for the concrete type instead (`githubAdapter`), or for the role (`provider`).
+
+`adapter/github/github.go` is the reference implementation of this convention.
+
+### Formatting
+
+`gofmt` is not optional. Run `gofmt -l .` before committing; it must print nothing.
+
 ## Providers (v1)
 
 Implementation order:

@@ -213,7 +213,7 @@ func TestListRepoPRsPagination(t *testing.T) {
 			t.Fatalf("newTestClient: %v", err)
 		}
 
-		a := &GitHubAdapter{
+		githubAdapter := &GitHubAdapter{
 			providerName: "test",
 			instance: model.ProviderInstance{
 				Name: "test",
@@ -224,9 +224,9 @@ func TestListRepoPRsPagination(t *testing.T) {
 			rest:  restClient,
 		}
 
-		prs, err := a.listRepoPRs(context.Background(), "owner", "repo")
+		prs, err := githubAdapter.listRepoPullRequests(context.Background(), "owner", "repo")
 		if err != nil {
-			t.Fatalf("listRepoPRs: %v", err)
+			t.Fatalf("listRepoPullRequests: %v", err)
 		}
 		if len(prs) != 4 {
 			t.Errorf("got %d PRs, want 4", len(prs))
@@ -257,7 +257,7 @@ func TestListRepoPRsPagination(t *testing.T) {
 			t.Fatalf("newTestClient: %v", err)
 		}
 
-		a := &GitHubAdapter{
+		githubAdapter := &GitHubAdapter{
 			providerName: "test",
 			instance: model.ProviderInstance{
 				Name: "test",
@@ -268,7 +268,7 @@ func TestListRepoPRsPagination(t *testing.T) {
 			rest:  restClient,
 		}
 
-		_, err = a.listRepoPRs(context.Background(), "owner", "repo")
+		_, err = githubAdapter.listRepoPullRequests(context.Background(), "owner", "repo")
 		if err == nil {
 			t.Fatal("expected error from page cap, got nil")
 		}
