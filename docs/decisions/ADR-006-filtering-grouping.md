@@ -300,6 +300,8 @@ func (p Predicate[T]) And(other Predicate[T]) Predicate[T] {
 // converts the serialized spec into a runtime predicate, resolving "me" sentinels.
 ```
 
+> **Superseded by ADR-009 §5.** The `resolvedMe` map above is keyed by `ProviderKind`. Identities are keyed by `ProviderInstance.Name` instead, because several instances of one kind may be configured with different logins and keying by kind collapses them to a single identity. The implemented signature is `Compile(resolvedMe query.ResolvedIdentities)`. The rest of this section stands.
+
 `FilterSpec` maps 1:1 to the `[views.filter]` TOML table. The `Compile` method produces a `Predicate[PullRequest]` that is applied by the Bubble Tea Update function when the PR list is refreshed.
 
 ### Bubble Tea integration
