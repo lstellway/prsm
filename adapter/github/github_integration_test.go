@@ -103,7 +103,8 @@ func TestListPullRequests(t *testing.T) {
 
 	// CI should start as Pending.
 	if !pr.CI.IsPending() {
-		t.Errorf("PR.CI should be Pending after list, got state %v", pr.CI.State())
+		t.Errorf("PR.CI should be Pending after list (loaded=%v absent=%v error=%v err=%v)",
+			pr.CI.IsLoaded(), pr.CI.IsAbsent(), pr.CI.IsError(), pr.CI.Err())
 	}
 	// ReviewerStates should start as Pending.
 	if !pr.Reviews.ReviewerStates.IsPending() {
