@@ -67,19 +67,19 @@ type ViewConfig struct {
 // valid when resource = "pr" and are rejected at load time otherwise.
 type FilterConfig struct {
 	// Universal filter fields
-	Author       string      `toml:"author"`        // "" | "me" | username
-	Repo         StringSlice `toml:"repo"`          // OR-match; "owner/name" format
-	Provider     StringSlice `toml:"provider"`      // OR-match; provider name from config
-	Label        StringSlice `toml:"label"`         // AND-match; PR must carry all labels
+	Author       string      `toml:"author"`         // "" | "me" | username
+	Repo         StringSlice `toml:"repo"`           // OR-match; "owner/name" format
+	Provider     StringSlice `toml:"provider"`       // OR-match; provider name from config
+	Label        StringSlice `toml:"label"`          // AND-match; PR must carry all labels
 	StalenessGTE int         `toml:"staleness_days"` // >= N days since UpdatedAt; 0 = no filter
 	State        string      `toml:"state"`          // "open" | "closed" | "merged" | "draft"
 	TargetBranch string      `toml:"target_branch"`  // substring match
 
 	// PR-specific filter fields
 	Reviewer     string `toml:"reviewer"`      // "" | "me" | username
-	Draft        *bool  `toml:"draft"`          // nil = no filter
-	CIStatus     string `toml:"ci_status"`      // "passing" | "failing" | "pending" | "none"
-	ReviewStatus string `toml:"review_status"`  // "approved" | "changes_requested" | "review_required" | "commented" | "none"
+	Draft        *bool  `toml:"draft"`         // nil = no filter
+	CIStatus     string `toml:"ci_status"`     // "passing" | "failing" | "pending" | "none"
+	ReviewStatus string `toml:"review_status"` // "approved" | "changes_requested" | "review_required" | "commented" | "none"
 }
 
 // SortConfig declares sort order for a view.
@@ -110,22 +110,22 @@ type HookConfig struct {
 // `repo = ["owner/a", "owner/b"]` interchangeably.
 type StringSlice []string
 
-func (s *StringSlice) UnmarshalTOML(v any) error {
-	switch t := v.(type) {
+func (stringSlice *StringSlice) UnmarshalTOML(value any) error {
+	switch typedValue := value.(type) {
 	case string:
-		*s = StringSlice{t}
+		*stringSlice = StringSlice{typedValue}
 	case []any:
-		result := make(StringSlice, len(t))
-		for i, item := range t {
-			str, ok := item.(string)
+		result := make(StringSlice, len(typedValue))
+		for index, element := range typedValue {
+			stringElement, ok := element.(string)
 			if !ok {
-				return fmt.Errorf("expected string element at index %d, got %T", i, item)
+				return fmt.Errorf("expected string element at index %d, got %T", index, element)
 			}
-			result[i] = str
+			result[index] = stringElement
 		}
-		*s = result
+		*stringSlice = result
 	default:
-		return fmt.Errorf("expected string or array of strings, got %T", v)
+		return fmt.Errorf("expected string or array of strings, got %T", value)
 	}
 	return nil
 }

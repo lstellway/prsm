@@ -26,26 +26,26 @@ type MockAdapter struct {
 
 var _ adapter.ProviderAdapter = &MockAdapter{}
 
-func (m *MockAdapter) Kind() model.ProviderKind { return m.KindVal }
+func (mockAdapter *MockAdapter) Kind() model.ProviderKind { return mockAdapter.KindVal }
 
-func (m *MockAdapter) Instance() model.ProviderInstance { return m.InstanceVal }
+func (mockAdapter *MockAdapter) Instance() model.ProviderInstance { return mockAdapter.InstanceVal }
 
-func (m *MockAdapter) ListPullRequests(_ context.Context) ([]model.PullRequest, error) {
-	return m.PullRequests, m.PullRequestsErr
+func (mockAdapter *MockAdapter) ListPullRequests(_ context.Context) ([]model.PullRequest, error) {
+	return mockAdapter.PullRequests, mockAdapter.PullRequestsErr
 }
 
-func (m *MockAdapter) LoadCI(_ context.Context, _ model.PullRequest) (model.CIStatus, error) {
-	return m.CIStatus, m.CIErr
+func (mockAdapter *MockAdapter) LoadCI(_ context.Context, _ model.PullRequest) (model.CIStatus, error) {
+	return mockAdapter.CIStatus, mockAdapter.CIErr
 }
 
-func (m *MockAdapter) LoadReviewerStates(_ context.Context, _ model.PullRequest) ([]model.ReviewerState, error) {
-	return m.ReviewerStates, m.ReviewerStatesErr
+func (mockAdapter *MockAdapter) LoadReviewerStates(_ context.Context, _ model.PullRequest) ([]model.ReviewerState, error) {
+	return mockAdapter.ReviewerStates, mockAdapter.ReviewerStatesErr
 }
 
-func (m *MockAdapter) LoadDiff(_ context.Context, _ model.PullRequest) (model.DiffStats, error) {
-	return m.DiffStats, m.DiffErr
+func (mockAdapter *MockAdapter) LoadDiff(_ context.Context, _ model.PullRequest) (model.DiffStats, error) {
+	return mockAdapter.DiffStats, mockAdapter.DiffErr
 }
 
-func (m *MockAdapter) ResolveIdentity(_ context.Context) (model.Identity, error) {
-	return m.Identity, m.IdentityErr
+func (mockAdapter *MockAdapter) ResolveIdentity(_ context.Context) (model.Identity, error) {
+	return mockAdapter.Identity, mockAdapter.IdentityErr
 }

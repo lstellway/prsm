@@ -7,52 +7,52 @@ import (
 	"github.com/lstellway/prsm/model"
 )
 
-// FuzzyMatch returns the subset of prs whose composite target string matches query
+// FuzzyMatch returns the subset of pullRequests whose composite target string matches query
 // using an fzf-style subsequence algorithm, ordered by descending match score.
-// An empty query returns prs unchanged.
-func FuzzyMatch(prs []model.PullRequest, query string) []model.PullRequest {
+// An empty query returns pullRequests unchanged.
+func FuzzyMatch(pullRequests []model.PullRequest, query string) []model.PullRequest {
 	if query == "" {
-		return prs
+		return pullRequests
 	}
 	query = strings.ToLower(query)
 
 	type scored struct {
-		pr    model.PullRequest
-		score int
+		pullRequest model.PullRequest
+		score       int
 	}
 
-	results := make([]scored, 0, len(prs))
-	for _, pr := range prs {
-		target := buildFuzzyTarget(pr)
+	results := make([]scored, 0, len(pullRequests))
+	for _, pullRequest := range pullRequests {
+		target := buildFuzzyTarget(pullRequest)
 		if score, ok := fuzzyScore(target, query); ok {
-			results = append(results, scored{pr, score})
+			results = append(results, scored{pullRequest, score})
 		}
 	}
 
-	sort.SliceStable(results, func(i, j int) bool {
-		return results[i].score > results[j].score
+	sort.SliceStable(results, func(leftIndex, rightIndex int) bool {
+		return results[leftIndex].score > results[rightIndex].score
 	})
 
-	out := make([]model.PullRequest, len(results))
-	for i, r := range results {
-		out[i] = r.pr
+	matched := make([]model.PullRequest, len(results))
+	for index, scoredResult := range results {
+		matched[index] = scoredResult.pullRequest
 	}
-	return out
+	return matched
 }
 
 // buildFuzzyTarget constructs the composite lowercase string that fuzzy matching runs against.
 // Composite field order follows ADR-006: Title, Author, Repo, Labels, Branches.
-func buildFuzzyTarget(pr model.PullRequest) string {
-	parts := make([]string, 0, 8+len(pr.Labels))
-	parts = append(parts, pr.Title, pr.Author.Username)
-	if pr.Author.DisplayName != "" {
-		parts = append(parts, pr.Author.DisplayName)
+func buildFuzzyTarget(pullRequest model.PullRequest) string {
+	parts := make([]string, 0, 8+len(pullRequest.Labels))
+	parts = append(parts, pullRequest.Title, pullRequest.Author.Username)
+	if pullRequest.Author.DisplayName != "" {
+		parts = append(parts, pullRequest.Author.DisplayName)
 	}
-	parts = append(parts, pr.Repo.Owner, pr.Repo.Name)
-	for _, l := range pr.Labels {
-		parts = append(parts, l.Name)
+	parts = append(parts, pullRequest.Repo.Owner, pullRequest.Repo.Name)
+	for _, label := range pullRequest.Labels {
+		parts = append(parts, label.Name)
 	}
-	parts = append(parts, pr.SourceBranch, pr.TargetBranch)
+	parts = append(parts, pullRequest.SourceBranch, pullRequest.TargetBranch)
 	return strings.ToLower(strings.Join(parts, " "))
 }
 
@@ -62,30 +62,30 @@ func buildFuzzyTarget(pr model.PullRequest) string {
 //   - +3 for a match at a word boundary (after space, /, _, -, .)
 //   - +2 for a match at the start of the target string
 func fuzzyScore(target, query string) (score int, matched bool) {
-	qi := 0
+	queryIndex := 0
 	lastMatch := -2
 
-	for ti := 0; ti < len(target) && qi < len(query); ti++ {
-		if target[ti] != query[qi] {
+	for targetIndex := 0; targetIndex < len(target) && queryIndex < len(query); targetIndex++ {
+		if target[targetIndex] != query[queryIndex] {
 			continue
 		}
 		charScore := 1
-		if ti == lastMatch+1 {
+		if targetIndex == lastMatch+1 {
 			charScore += 4
 		}
-		if ti == 0 {
+		if targetIndex == 0 {
 			charScore += 2
 		}
-		if ti > 0 {
-			prev := target[ti-1]
-			if prev == ' ' || prev == '/' || prev == '_' || prev == '-' || prev == '.' {
+		if targetIndex > 0 {
+			previousChar := target[targetIndex-1]
+			if previousChar == ' ' || previousChar == '/' || previousChar == '_' || previousChar == '-' || previousChar == '.' {
 				charScore += 3
 			}
 		}
 		score += charScore
-		lastMatch = ti
-		qi++
+		lastMatch = targetIndex
+		queryIndex++
 	}
 
-	return score, qi == len(query)
+	return score, queryIndex == len(query)
 }
