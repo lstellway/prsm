@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 
 	gogithub "github.com/google/go-github/v88/github"
 	"github.com/lstellway/prsm/adapter"
@@ -32,48 +33,57 @@ type Config struct {
 }
 
 // GitHubAdapter is the prsm provider adapter for GitHub.
+// It is safe for concurrent use and must not be copied once constructed.
 type GitHubAdapter struct {
 	providerName string
 	instance     model.ProviderInstance // immutable after New(); Account is excluded
-	account      string                 // populated by ResolveIdentity; kept separate to avoid data races
 	repos        []adapter.RepoRef
 	rest         *gogithub.Client
+
+	// mutex guards state resolved after construction. ADR-009's assembly layer
+	// resolves identity at startup while fetches are already fanning out, so
+	// ResolveIdentity and Instance genuinely run concurrently on one adapter.
+	// Holding Account outside instance avoids tearing the struct; it does not
+	// on its own make the string safe to read while another goroutine writes it.
+	mutex   sync.RWMutex
+	account string // written by ResolveIdentity, read by Instance
 }
 
 // New constructs a GitHubAdapter from a Config.
-// The token in cfg.Token must already be expanded (no "$VAR" references).
-func New(cfg Config) (*GitHubAdapter, error) {
-	if cfg.Token == "" {
-		return nil, fmt.Errorf("github adapter %q: token is required", cfg.Name)
+// The token in adapterConfig.Token must already be expanded (no "$VAR" references).
+func New(adapterConfig Config) (*GitHubAdapter, error) {
+	if adapterConfig.Token == "" {
+		return nil, fmt.Errorf("github adapter %q: token is required", adapterConfig.Name)
 	}
 
-	httpClient := newHTTPClient(cfg.Token)
+	httpClient := newHTTPClient(adapterConfig.Token)
 
-	apiBase := strings.TrimRight(cfg.BaseURL, "/")
-	if apiBase == "" {
-		apiBase = defaultAPIBaseURL
+	apiBaseURL := strings.TrimRight(adapterConfig.BaseURL, "/")
+	if apiBaseURL == "" {
+		apiBaseURL = defaultAPIBaseURL
 	}
 
 	// Pass our pre-configured http.Client (oauth2 auth + ETag caching) directly.
 	// Do NOT also call WithAuthToken — auth is already handled by the transport.
-	restOpts := []gogithub.ClientOptionsFunc{gogithub.WithHTTPClient(httpClient)}
-	if apiBase != defaultAPIBaseURL {
-		restOpts = append(restOpts, gogithub.WithEnterpriseURLs(apiBase+"/", apiBase+"/"))
+	restClientOptions := []gogithub.ClientOptionsFunc{gogithub.WithHTTPClient(httpClient)}
+	if apiBaseURL != defaultAPIBaseURL {
+		restClientOptions = append(restClientOptions,
+			gogithub.WithEnterpriseURLs(apiBaseURL+"/", apiBaseURL+"/"))
 	}
-	restClient, err := gogithub.NewClient(restOpts...)
+	restClient, err := gogithub.NewClient(restClientOptions...)
 	if err != nil {
-		return nil, fmt.Errorf("github adapter %q: %w", cfg.Name, err)
+		return nil, fmt.Errorf("github adapter %q: %w", adapterConfig.Name, err)
 	}
 
 	host := "github.com"
-	if cfg.BaseURL != "" {
-		host = extractHost(cfg.BaseURL)
+	if adapterConfig.BaseURL != "" {
+		host = extractHost(adapterConfig.BaseURL)
 	}
 
 	return &GitHubAdapter{
-		providerName: cfg.Name,
+		providerName: adapterConfig.Name,
 		instance: model.ProviderInstance{
-			Name: cfg.Name,
+			Name: adapterConfig.Name,
 			Kind: model.ProviderGitHub,
 			Host: host,
 			// Account is populated by ResolveIdentity once called at startup.
@@ -81,42 +91,51 @@ func New(cfg Config) (*GitHubAdapter, error) {
 		// Cloned so a caller mutating its own slice after New() cannot reach
 		// adapter state. New() is callable without the config layer, so the
 		// caller is not guaranteed to hand over a freshly built slice.
-		repos: slices.Clone(cfg.Repos),
+		repos: slices.Clone(adapterConfig.Repos),
 		rest:  restClient,
 	}, nil
 }
 
 // Kind returns the provider kind for this adapter instance.
-func (a *GitHubAdapter) Kind() model.ProviderKind { return model.ProviderGitHub }
+func (githubAdapter *GitHubAdapter) Kind() model.ProviderKind { return model.ProviderGitHub }
 
 // Instance returns the full ProviderInstance this adapter serves.
-// Account is composed at call time from the separately stored account field so
-// that callers always see the value set by ResolveIdentity without a data race.
-func (a *GitHubAdapter) Instance() model.ProviderInstance {
-	inst := a.instance
-	inst.Account = a.account
-	return inst
+// Account is composed at call time under the read lock, so callers always see
+// either the value set by ResolveIdentity or the empty string it started as —
+// never a partially written one.
+func (githubAdapter *GitHubAdapter) Instance() model.ProviderInstance {
+	githubAdapter.mutex.RLock()
+	defer githubAdapter.mutex.RUnlock()
+
+	instance := githubAdapter.instance
+	instance.Account = githubAdapter.account
+	return instance
 }
 
 // ResolveIdentity returns the authenticated user's identity and populates
 // Instance().Account with the resolved GitHub login for "me" sentinel resolution.
-func (a *GitHubAdapter) ResolveIdentity(ctx context.Context) (model.Identity, error) {
-	user, resp, err := a.rest.Users.Get(ctx, "")
+func (githubAdapter *GitHubAdapter) ResolveIdentity(ctx context.Context) (model.Identity, error) {
+	user, response, err := githubAdapter.rest.Users.Get(ctx, "")
 	if err != nil {
-		return model.Identity{}, fmt.Errorf("github %q: resolve identity: %w", a.providerName, err)
+		return model.Identity{}, fmt.Errorf("github %q: resolve identity: %w",
+			githubAdapter.providerName, err)
 	}
-	if err := checkRateLimit(a.Instance(), resp.Response); err != nil {
+	if err := checkRateLimit(githubAdapter.Instance(), response.Response); err != nil {
 		return model.Identity{}, err
 	}
 
-	name := user.GetName()
-	if name == "" {
-		name = user.GetLogin()
+	displayName := user.GetName()
+	if displayName == "" {
+		displayName = user.GetLogin()
 	}
-	a.account = user.GetLogin()
+
+	githubAdapter.mutex.Lock()
+	githubAdapter.account = user.GetLogin()
+	githubAdapter.mutex.Unlock()
+
 	return model.Identity{
 		Username:    user.GetLogin(),
-		DisplayName: name,
+		DisplayName: displayName,
 		AvatarURL:   user.GetAvatarURL(),
 	}, nil
 }
@@ -124,150 +143,164 @@ func (a *GitHubAdapter) ResolveIdentity(ctx context.Context) (model.Identity, er
 // ListPullRequests fetches all open pull requests across configured repos via REST.
 // Results from repos that succeed are returned even when other repos fail;
 // all errors are joined and returned alongside the partial result.
-func (a *GitHubAdapter) ListPullRequests(ctx context.Context) ([]model.PullRequest, error) {
-	var all []model.PullRequest
-	var errs []error
-	for _, ref := range a.repos {
-		prs, err := a.listRepoPRs(ctx, ref.Owner, ref.Repo)
+func (githubAdapter *GitHubAdapter) ListPullRequests(ctx context.Context) ([]model.PullRequest, error) {
+	var allPullRequests []model.PullRequest
+	var fetchErrors []error
+
+	for _, repoRef := range githubAdapter.repos {
+		pullRequests, err := githubAdapter.listRepoPullRequests(ctx, repoRef.Owner, repoRef.Repo)
 		if err != nil {
-			errs = append(errs, err)
+			fetchErrors = append(fetchErrors, err)
 			continue
 		}
-		all = append(all, prs...)
+		allPullRequests = append(allPullRequests, pullRequests...)
 	}
-	return all, errors.Join(errs...)
+	return allPullRequests, errors.Join(fetchErrors...)
 }
 
-func (a *GitHubAdapter) listRepoPRs(ctx context.Context, owner, repo string) ([]model.PullRequest, error) {
+func (githubAdapter *GitHubAdapter) listRepoPullRequests(
+	ctx context.Context, owner, repo string,
+) ([]model.PullRequest, error) {
 	// 50 pages × 100 PRs = 5,000 PRs maximum per repo per call.
 	const maxPages = 50
 
-	opts := &gogithub.PullRequestListOptions{
+	listOptions := &gogithub.PullRequestListOptions{
 		State:       "open",
 		ListOptions: gogithub.ListOptions{PerPage: 100},
 	}
 
-	var all []model.PullRequest
+	// Read once so every PR in this call is stamped with the same instance,
+	// rather than later pages picking up an identity resolved mid-fetch.
+	instance := githubAdapter.Instance()
+
+	var allPullRequests []model.PullRequest
 	for page := 1; ; page++ {
 		if page > maxPages {
 			return nil, fmt.Errorf("github %q: list PRs %s/%s: exceeded %d-page limit",
-				a.providerName, owner, repo, maxPages)
+				githubAdapter.providerName, owner, repo, maxPages)
 		}
 
-		prs, resp, err := a.rest.PullRequests.List(ctx, owner, repo, opts)
+		pullRequestPage, response, err := githubAdapter.rest.PullRequests.List(ctx, owner, repo, listOptions)
 		if err != nil {
-			return nil, fmt.Errorf("github %q: list PRs %s/%s: %w", a.providerName, owner, repo, err)
+			return nil, fmt.Errorf("github %q: list PRs %s/%s: %w",
+				githubAdapter.providerName, owner, repo, err)
 		}
-		if rlErr := checkRateLimit(a.Instance(), resp.Response); rlErr != nil {
-			return nil, rlErr
-		}
-
-		for _, pr := range prs {
-			all = append(all, normalizePR(pr, owner, repo, a.Instance()))
+		if rateLimitErr := checkRateLimit(instance, response.Response); rateLimitErr != nil {
+			return nil, rateLimitErr
 		}
 
-		if resp.NextPage == 0 {
+		for _, pullRequest := range pullRequestPage {
+			allPullRequests = append(allPullRequests, normalizePR(pullRequest, owner, repo, instance))
+		}
+
+		if response.NextPage == 0 {
 			break
 		}
-		opts.Page = resp.NextPage
+		listOptions.Page = response.NextPage
 	}
 
-	return all, nil
+	return allPullRequests, nil
 }
 
 // LoadCI fetches CI/check-run status for a PR's head commit via REST.
-func (a *GitHubAdapter) LoadCI(ctx context.Context, pr model.PullRequest) (model.CIStatus, error) {
-	if pr.HeadSHA == "" {
+func (githubAdapter *GitHubAdapter) LoadCI(
+	ctx context.Context, pullRequest model.PullRequest,
+) (model.CIStatus, error) {
+	if pullRequest.HeadSHA == "" {
 		return model.CIStatus{State: model.CIStateNone}, nil
 	}
 
 	// 50 pages × 100 runs = 5,000 check runs maximum per SHA.
 	const maxPages = 50
 
-	opts := &gogithub.ListCheckRunsOptions{
+	listOptions := &gogithub.ListCheckRunsOptions{
 		ListOptions: gogithub.ListOptions{PerPage: 100},
 	}
 
-	var allRuns []*gogithub.CheckRun
+	var allCheckRuns []*gogithub.CheckRun
 	for page := 1; ; page++ {
 		if page > maxPages {
 			return model.CIStatus{}, fmt.Errorf("github %q: load CI for %s#%d: exceeded %d-page limit",
-				a.providerName, pr.Repo.Name, pr.Number, maxPages)
+				githubAdapter.providerName, pullRequest.Repo.Name, pullRequest.Number, maxPages)
 		}
-		runs, resp, err := a.rest.Checks.ListCheckRunsForRef(
-			ctx, pr.Repo.Owner, pr.Repo.Name, pr.HeadSHA, opts)
+		checkRunsResponse, response, err := githubAdapter.rest.Checks.ListCheckRunsForRef(
+			ctx, pullRequest.Repo.Owner, pullRequest.Repo.Name, pullRequest.HeadSHA, listOptions)
 		if err != nil {
 			return model.CIStatus{}, fmt.Errorf("github %q: load CI for %s#%d: %w",
-				a.providerName, pr.Repo.Name, pr.Number, err)
+				githubAdapter.providerName, pullRequest.Repo.Name, pullRequest.Number, err)
 		}
-		if rlErr := checkRateLimit(a.Instance(), resp.Response); rlErr != nil {
-			return model.CIStatus{}, rlErr
+		if rateLimitErr := checkRateLimit(githubAdapter.Instance(), response.Response); rateLimitErr != nil {
+			return model.CIStatus{}, rateLimitErr
 		}
-		allRuns = append(allRuns, runs.CheckRuns...)
-		if resp.NextPage == 0 {
+		allCheckRuns = append(allCheckRuns, checkRunsResponse.CheckRuns...)
+		if response.NextPage == 0 {
 			break
 		}
-		opts.Page = resp.NextPage
+		listOptions.Page = response.NextPage
 	}
 
-	return normalizeCIStatus(allRuns), nil
+	return normalizeCIStatus(allCheckRuns), nil
 }
 
 // LoadReviewerStates fetches individual review decisions for a PR via REST.
-func (a *GitHubAdapter) LoadReviewerStates(ctx context.Context, pr model.PullRequest) ([]model.ReviewerState, error) {
+func (githubAdapter *GitHubAdapter) LoadReviewerStates(
+	ctx context.Context, pullRequest model.PullRequest,
+) ([]model.ReviewerState, error) {
 	// 50 pages × 100 reviews = 5,000 reviews maximum per PR.
 	const maxPages = 50
 
-	opts := &gogithub.ListOptions{PerPage: 100}
+	listOptions := &gogithub.ListOptions{PerPage: 100}
 	var allReviews []*gogithub.PullRequestReview
 
 	for page := 1; ; page++ {
 		if page > maxPages {
 			return nil, fmt.Errorf("github %q: load reviews for %s#%d: exceeded %d-page limit",
-				a.providerName, pr.Repo.Name, pr.Number, maxPages)
+				githubAdapter.providerName, pullRequest.Repo.Name, pullRequest.Number, maxPages)
 		}
-		reviews, resp, err := a.rest.PullRequests.ListReviews(
-			ctx, pr.Repo.Owner, pr.Repo.Name, pr.Number, opts)
+		reviewPage, response, err := githubAdapter.rest.PullRequests.ListReviews(
+			ctx, pullRequest.Repo.Owner, pullRequest.Repo.Name, pullRequest.Number, listOptions)
 		if err != nil {
 			return nil, fmt.Errorf("github %q: load reviews for %s#%d: %w",
-				a.providerName, pr.Repo.Name, pr.Number, err)
+				githubAdapter.providerName, pullRequest.Repo.Name, pullRequest.Number, err)
 		}
-		if rlErr := checkRateLimit(a.Instance(), resp.Response); rlErr != nil {
-			return nil, rlErr
+		if rateLimitErr := checkRateLimit(githubAdapter.Instance(), response.Response); rateLimitErr != nil {
+			return nil, rateLimitErr
 		}
-		allReviews = append(allReviews, reviews...)
-		if resp.NextPage == 0 {
+		allReviews = append(allReviews, reviewPage...)
+		if response.NextPage == 0 {
 			break
 		}
-		opts.Page = resp.NextPage
+		listOptions.Page = response.NextPage
 	}
 
 	return normalizeReviewerStates(allReviews), nil
 }
 
 // LoadDiff fetches commit and file-change counts for a PR via the REST detail endpoint.
-func (a *GitHubAdapter) LoadDiff(ctx context.Context, pr model.PullRequest) (model.DiffStats, error) {
-	ghPR, resp, err := a.rest.PullRequests.Get(ctx, pr.Repo.Owner, pr.Repo.Name, pr.Number)
+func (githubAdapter *GitHubAdapter) LoadDiff(
+	ctx context.Context, pullRequest model.PullRequest,
+) (model.DiffStats, error) {
+	githubPullRequest, response, err := githubAdapter.rest.PullRequests.Get(
+		ctx, pullRequest.Repo.Owner, pullRequest.Repo.Name, pullRequest.Number)
 	if err != nil {
 		return model.DiffStats{}, fmt.Errorf("github %q: load diff for %s#%d: %w",
-			a.providerName, pr.Repo.Name, pr.Number, err)
+			githubAdapter.providerName, pullRequest.Repo.Name, pullRequest.Number, err)
 	}
-	if rlErr := checkRateLimit(a.Instance(), resp.Response); rlErr != nil {
-		return model.DiffStats{}, rlErr
+	if rateLimitErr := checkRateLimit(githubAdapter.Instance(), response.Response); rateLimitErr != nil {
+		return model.DiffStats{}, rateLimitErr
 	}
 	return model.DiffStats{
-		Commits:      ghPR.GetCommits(),
-		ChangedFiles: ghPR.GetChangedFiles(),
-		Additions:    ghPR.GetAdditions(),
-		Deletions:    ghPR.GetDeletions(),
+		Commits:      githubPullRequest.GetCommits(),
+		ChangedFiles: githubPullRequest.GetChangedFiles(),
+		Additions:    githubPullRequest.GetAdditions(),
+		Deletions:    githubPullRequest.GetDeletions(),
 	}, nil
 }
 
 func extractHost(rawURL string) string {
-	u, err := url.Parse(rawURL)
-	if err != nil || u.Host == "" {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil || parsedURL.Host == "" {
 		return rawURL
 	}
-	return u.Hostname()
+	return parsedURL.Hostname()
 }
-
