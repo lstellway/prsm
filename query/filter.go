@@ -139,8 +139,17 @@ func matchesRequestedReviewer(reviewer string, resolvedMe ResolvedIdentities) Pr
 	}
 }
 
+// matchesAggregateReviewState implements ADR-010 §2(d), "unknown matches, known
+// compares". AggregateState is a bare enum rather than a LoadResult, so its unknown
+// is the zero value (§7) — this reads one field and never consults ReviewerStates.
+//
+// A derived review_required is known, so it compares: a PR already established to
+// need review does not match review_status = "approved".
 func matchesAggregateReviewState(status model.AggregateReviewState) Predicate[model.PullRequest] {
 	return func(pullRequest model.PullRequest) bool {
+		if !pullRequest.Reviews.AggregateState.IsKnown() {
+			return true
+		}
 		return pullRequest.Reviews.AggregateState == status
 	}
 }
@@ -250,7 +259,10 @@ func parseAggregateReviewState(status string) (model.AggregateReviewState, error
 	case "commented":
 		return model.AggregateReviewStateCommented, nil
 	default:
-		return "", fmt.Errorf("invalid review_status %q: must be one of approved, changes_requested, review_required, commented, none", status)
+		// The sentinel is deliberate: on the error path there is no state to report.
+		// Callers must check err — the value is meaningless, not a default.
+		// "unknown" is not accepted as user input; it is prsm's own bookkeeping.
+		return model.AggregateReviewStateUnknown, fmt.Errorf("invalid review_status %q: must be one of approved, changes_requested, review_required, commented, none", status)
 	}
 }
 
@@ -265,7 +277,7 @@ func parsePRState(state string) (model.PRState, error) {
 	case "draft":
 		return model.PRStateDraft, nil
 	default:
-		return "", fmt.Errorf("invalid state %q: must be one of open, closed, merged, draft", state)
+		return model.PRStateUnknown, fmt.Errorf("invalid state %q: must be one of open, closed, merged, draft", state)
 	}
 }
 
@@ -280,6 +292,6 @@ func parseCIState(status string) (model.CIState, error) {
 	case "none":
 		return model.CIStateNone, nil
 	default:
-		return "", fmt.Errorf("invalid ci_status %q: must be one of passing, failing, pending, none", status)
+		return model.CIStateUnknown, fmt.Errorf("invalid ci_status %q: must be one of passing, failing, pending, none", status)
 	}
 }

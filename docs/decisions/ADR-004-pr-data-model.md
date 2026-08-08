@@ -24,8 +24,8 @@ Each provider exposes different terminology (GitHub "pull requests" vs. GitLab "
 | `requested_reviewers` | ✓ (identity only) | ✓ via `reviewers[]` | ✓ (populated from pending review records) |
 | `review states` | ✗ (separate `/reviews` call or GraphQL) | ✗ (approval state needs `/approvals`) | ✗ (separate `/reviews` call) |
 | `CI/check status` | ✗ (separate `/check-runs` call) | ✓ inline via `head_pipeline` | ✗ (separate Gitea Actions call) |
-| `mergeable` | ✗ (detail endpoint only; GitHub does not compute mergeability at list time — set to `MergeableStateUnknown` by the GitHub adapter) | ✓ (`detailed_merge_status`) | ✓ (`mergeable`) |
-| `comments count` | ✗ (detail endpoint only; go-github explicitly marks `Comments` as not populated by List — set to 0 by the GitHub adapter) | ✓ (`user_notes_count`) | ✓ (`comments`) |
+| `mergeable` | ✗ (detail endpoint only; GitHub does not compute mergeability at list time — left `Pending` by the GitHub adapter) | ✓ (`detailed_merge_status`) | ✓ (`mergeable`) |
+| `comments count` | ✗ (detail endpoint only; go-github explicitly marks `Comments` as not populated by List — left `Pending` by the GitHub adapter) | ✓ (`user_notes_count`) | ✓ (`comments`) |
 | `commits count` | ✗ (detail endpoint) | ✗ (detail endpoint) | ✗ (detail endpoint) |
 | `changed files count` | ✗ (detail endpoint) | ✗ (detail endpoint) | ✗ (detail endpoint) |
 
@@ -59,7 +59,7 @@ The chosen approach is a generic `LoadResult[T]` type with three states: **Pendi
 | Dismissed | `DISMISSED` | (no direct equivalent) | ✗ |
 | Pending / not yet reviewed | `PENDING` | `unreviewed` (state on reviewer object) | ✗ |
 
-The normalized `ReviewDecision` enum covers the union of meaningful states: `Approved`, `ChangesRequested`, `Commented`, `Dismissed`, `Pending`. Provider adapters map provider-specific strings to this enum; unmappable states map to `Pending` as the safest default.
+The normalized `ReviewDecision` enum covers the union of meaningful states: `Approved`, `ChangesRequested`, `Commented`, `Dismissed`, `Pending`. Provider adapters map provider-specific strings to this enum; unmappable states map to `ReviewDecisionUnknown`, the zero value. They must not map to `Pending`, which is a real verdict — "requested, no decision submitted yet" — and would assert something about the reviewer that the provider never said.
 
 ### Aggregate review state
 
@@ -70,6 +70,9 @@ The list view needs a single triage signal per PR — "needs my review," "approv
 - `ReviewRequired` if there are outstanding requested reviewers who have not yet submitted any decision.
 - `Commented` if reviews exist but are all comment-only.
 - `None` if no review activity at all.
+- `Unknown` if the aggregate has not been computed for this PR — the zero value.
+
+`None` and `Unknown` are different claims and must never share a value. `None` says prsm looked and there is no review activity; `Unknown` says prsm has not looked. The distinction is load-bearing rather than pedantic: GitHub's list response carries no review data, so its adapter can only conclude `ReviewRequired` (when requested reviewers exist) or nothing at all. If "nothing at all" were spelled `None`, then `review_status = "none"` would match nearly every PR in a freshly-fetched list, including PRs approved by three reviewers.
 
 ### Self-hosted instances
 
@@ -104,9 +107,10 @@ The normalized PR data model uses the following Go types.
 type ProviderKind string
 
 const (
-    ProviderGitHub ProviderKind = "github"
-    ProviderGitLab ProviderKind = "gitlab"
-    ProviderGitea  ProviderKind = "gitea" // covers Gitea, Forgejo, Codeberg
+    ProviderUnknown ProviderKind = ""       // zero value; rejected at adapter construction
+    ProviderGitHub  ProviderKind = "github"
+    ProviderGitLab  ProviderKind = "gitlab"
+    ProviderGitea   ProviderKind = "gitea"  // covers Gitea, Forgejo, Codeberg
 )
 
 // ProviderInstance identifies one configured account/server combination.
@@ -119,12 +123,14 @@ type ProviderInstance struct {
 }
 
 // LoadResult[T] represents a field that may not yet have been fetched, may have
-// a value, or may be absent because the provider does not supply it.
+// a value, may be absent because the provider does not supply it, or may have
+// failed to fetch. model/load.go is authoritative for the full method set.
 //
 // The zero value represents LoadStatePending (not yet fetched).
 type LoadResult[T any] struct {
     state LoadState
     value T
+    err   error
 }
 
 type LoadState uint8
@@ -139,10 +145,13 @@ const (
 func Pending[T any]() LoadResult[T]           { return LoadResult[T]{state: LoadStatePending} }
 func Loaded[T any](v T) LoadResult[T]         { return LoadResult[T]{state: LoadStateLoaded, value: v} }
 func Absent[T any]() LoadResult[T]            { return LoadResult[T]{state: LoadStateAbsent} }
+func Failed[T any](cause error) LoadResult[T] { return LoadResult[T]{state: LoadStateError, err: cause} }
 
 func (r LoadResult[T]) IsLoaded() bool        { return r.state == LoadStateLoaded }
 func (r LoadResult[T]) IsPending() bool       { return r.state == LoadStatePending }
 func (r LoadResult[T]) IsAbsent() bool        { return r.state == LoadStateAbsent }
+func (r LoadResult[T]) IsError() bool         { return r.state == LoadStateError }
+func (r LoadResult[T]) Err() error            { return r.err }
 func (r LoadResult[T]) Get() (T, bool)        { return r.value, r.state == LoadStateLoaded }
 func (r LoadResult[T]) MustGet() T            {
     if r.state != LoadStateLoaded {
@@ -165,10 +174,11 @@ func (r LoadResult[T]) UnwrapOr(def T) T {
 type PRState string
 
 const (
-    PRStateOpen   PRState = "open"
-    PRStateClosed PRState = "closed"
-    PRStateMerged PRState = "merged"
-    PRStateDraft  PRState = "draft" // open + draft; draft is surfaced separately for triage
+    PRStateUnknown PRState = ""       // zero value; every adapter assigns a real state
+    PRStateOpen    PRState = "open"
+    PRStateClosed  PRState = "closed"
+    PRStateMerged  PRState = "merged"
+    PRStateDraft   PRState = "draft"  // open + draft; draft is surfaced separately for triage
 )
 
 // ReviewDecision is one reviewer's verdict on a PR.
@@ -176,45 +186,56 @@ const (
 type ReviewDecision string
 
 const (
+    ReviewDecisionUnknown          ReviewDecision = ""        // zero value; also where unmappable provider states land
     ReviewDecisionApproved         ReviewDecision = "approved"
     ReviewDecisionChangesRequested ReviewDecision = "changes_requested"
     ReviewDecisionCommented        ReviewDecision = "commented"
     ReviewDecisionDismissed        ReviewDecision = "dismissed"
-    ReviewDecisionPending          ReviewDecision = "pending" // requested but no decision yet
+    ReviewDecisionPending          ReviewDecision = "pending"  // requested but no decision yet
 )
 
 // AggregateReviewState is the rolled-up review verdict for display and triage sorting.
 type AggregateReviewState string
 
 const (
-    AggregateReviewNone             AggregateReviewState = "none"               // no reviewers requested or assigned
-    AggregateReviewRequired         AggregateReviewState = "review_required"    // reviewers assigned, none submitted
-    AggregateReviewApproved         AggregateReviewState = "approved"           // all required approvals met
-    AggregateReviewChangesRequested AggregateReviewState = "changes_requested"  // at least one change request outstanding
-    AggregateReviewCommented        AggregateReviewState = "commented"          // reviews exist but all are comment-only
+    AggregateReviewStateUnknown          AggregateReviewState = ""                   // zero value; not computed yet
+    AggregateReviewStateNone             AggregateReviewState = "none"               // computed: no reviewers requested or assigned
+    AggregateReviewStateRequired         AggregateReviewState = "review_required"    // reviewers assigned, none submitted
+    AggregateReviewStateApproved         AggregateReviewState = "approved"           // all required approvals met
+    AggregateReviewStateChangesRequested AggregateReviewState = "changes_requested"  // at least one change request outstanding
+    AggregateReviewStateCommented        AggregateReviewState = "commented"          // reviews exist but all are comment-only
 )
 
-// Reaffirmed by ADR-010 §7. `AggregateReviewNone` is "none" as written above.
+// Reaffirmed by ADR-010 §7. `AggregateReviewStateNone` is "none" as written above.
 // The implementation regressed from this ADR: model/review.go:19 set it to "",
 // colliding with the zero value, so "computed, and there are no reviews" became
 // indistinguishable from "never computed" — which is why review_status = "none"
 // matched a PR approved by three reviewers whose aggregate was never populated.
 //
-// ADR-010 §7 restores "none" and gives "" a defined meaning: it is the zero value,
-// it is NOT a member of this enum, and it means "not yet computed". Adapters leave
-// the field at "" until they can say something true about it — see
+// ADR-010 §7 restores "none" and gives "" a defined meaning: it is the zero value
+// and it means "not yet computed". It is a named member — `AggregateReviewStateUnknown`
+// — per §7's "Naming the sentinel is part of this decision"; §7's earlier prose calls
+// it a non-member, which the same section then contradicts. Adapters leave the field
+// at the sentinel until they can say something true about it — see
 // adapter/github/normalize.go, which sets review_required only when requested
-// reviewers exist. Filters treat "" as unknown; grouping gives it its own bucket
-// per ADR-010 §8.
+// reviewers exist. Filters treat it as unknown and pass it through per §2(d);
+// grouping gives it its own bucket per ADR-010 §8.
+
+// IsKnown reports whether the aggregate has been computed. Every enum in this
+// package carries the equivalent method; see Design notes → Unknown values.
+func (aggregateReviewState AggregateReviewState) IsKnown() bool {
+    return aggregateReviewState != AggregateReviewStateUnknown
+}
 
 // CIState is the overall status of CI/check runs for the PR head commit.
 type CIState string
 
 const (
+    CIStateUnknown CIState = ""        // zero value; no verdict established
     CIStatePassing CIState = "passing"
     CIStateFailing CIState = "failing"
     CIStatePending CIState = "pending"
-    CIStateNone    CIState = "none" // no CI configured or checks not found
+    CIStateNone    CIState = "none"    // computed: no CI configured or checks not found
 )
 
 // MergeableState is the mergeable state of the PR.
@@ -266,7 +287,7 @@ type Repository struct {
 
 // ReviewerState captures one reviewer's identity and their current decision.
 type ReviewerState struct {
-    Username string
+    Reviewer Reviewer // alias for Identity, in the review-participation context
     Decision ReviewDecision
 }
 
@@ -285,6 +306,8 @@ type ReviewSummary struct {
     // AggregateState is the computed roll-up used for list-view display and sorting.
     // Computed by the adapter after ReviewerStates is loaded; before that, it is
     // derived from RequestedReviewers alone (any requested reviewer → ReviewRequired).
+    // Not wrapped — it is refined in place, and its own zero value already means
+    // "not computed". Check IsKnown() before treating it as an answer.
     AggregateState AggregateReviewState
 }
 
@@ -293,6 +316,7 @@ type ReviewSummary struct {
 type CIStatus struct {
     State   CIState
     Summary string // human-readable summary, e.g., "3 checks passed, 1 failed"
+    URL     string // link to the CI run; empty if the provider does not supply one
 }
 
 // DiffStats holds size metrics that require the detail endpoint.
@@ -348,9 +372,11 @@ type PullRequest struct {
     // draft into state, and for filtering convenience.
     Draft bool
 
-    // Mergeable is nullable because providers compute this asynchronously.
-    // The zero value is MergeableStateUnknown.
-    Mergeable MergeableState
+    // Mergeable availability varies by connection: GitLab and Gitea return it from
+    // the list response, GitHub requires the detail endpoint. Pending means prsm has
+    // not asked; Loaded(MergeableStateUnknown) means it asked and the provider is
+    // still computing.
+    Mergeable LoadResult[MergeableState]
 
     // --- Participants ---
 
@@ -366,9 +392,12 @@ type PullRequest struct {
     // For GitHub and Gitea/Forgejo it requires a secondary call.
     CI LoadResult[CIStatus]
 
-    // --- Counts (eagerly loaded from list response) ---
+    // --- Counts ---
 
-    CommentCount int // general comments (not review comments)
+    // CommentCount covers general comments, not review comments. GitHub's list
+    // endpoint omits it, so it is wrapped: a bare int cannot distinguish "no
+    // comments" from "not fetched", and unlike an enum it has no room for a sentinel.
+    CommentCount LoadResult[int]
 
     // --- Counts (lazy-loaded from detail endpoint) ---
 
@@ -419,9 +448,12 @@ Applied to the model as it stands:
 | `Diff LoadResult[DiffStats]` | yes | wrapped | conforms |
 | `Reviews.ReviewerStates LoadResult[[]ReviewerState]` | yes | wrapped | conforms |
 | `Reviews.AggregateState` | no — computed | bare enum, `""` = not computed | conforms once ADR-010 §7 lands |
-| `Mergeable MergeableState` | yes | bare enum, `MergeableStateUnknown = ""` | Axis 1 correct; Axis 2 pending — see below |
+| `Mergeable LoadResult[MergeableState]` | yes | wrapped; `MergeableStateUnknown = ""` inside it | conforms as of STE-100 |
+| `CommentCount LoadResult[int]` | yes | wrapped; an `int` has no room for a sentinel | conforms as of STE-100 |
 
-`Mergeable` is the one field the rule does not yet fit: it is fetched (GitHub computes mergeability asynchronously and omits it at list time — see the field-availability table above), so Axis 2 says it should be `LoadResult[MergeableState]`, with the wrapper carrying "prsm has not fetched it" and the enum member `MergeableStateUnknown` carrying "the provider is still computing it." Those are genuinely different and currently collapse into one `""`. No adapter assigns the field today and nothing reads it, so this is recorded rather than actioned.
+`Mergeable` was the one field the rule did not fit, and STE-100 actioned it rather than leaving it recorded. It is fetched (GitHub computes mergeability asynchronously and omits it at list time — see the field-availability table above), so Axis 2 makes it `LoadResult[MergeableState]`: the wrapper carries "prsm has not fetched it" and the enum member `MergeableStateUnknown` carries "the provider is still computing it." Those are genuinely different and previously collapsed into one `""`. It was actioned early because nothing assigned or read the field, `api/proto` defines no messages, and the module is pre-v1 — the change is free now and gets more expensive with every consumer built on top of it.
+
+`CommentCount` had the same defect in a worse form and is wrapped by the same change. `int` has no spare value to reserve, so the GitHub adapter's "not fetched" was indistinguishable from a genuine zero — a PR with forty comments would render as "0 comments". Axis 1 cannot reach a non-enum type; only Axis 2 can, which is the clearest evidence the second axis earns its place.
 
 Note that Axis 2 is about *when to wrap*, and is independent of the reason channel `LoadStateAbsent` needs; that is tracked separately and does not conflict with this rule.
 
@@ -471,4 +503,4 @@ Filter and sort expressions operate on `PullRequest` fields. The view layer trea
 - **Write operations** (approve, comment): these do not change the data model; they add methods on the adapter interface that take `PullRequest.ProviderID` + `Provider` as inputs.
 - **`AggregateReviewState` expansion**: if providers add new review states (e.g., GitLab adds a "requested changes" concept), the enum is extended and the aggregation logic updated; no change to the struct layout.
 - **Additional consumers** (MCP server, HTTP API, CLI one-shot): the model and query layers are already consumer-agnostic; new transports add a thin assembly layer without touching this schema.
-- **Event Engine (ADR-007)**: the `PullRequest` type is the unit of comparison in the delta engine. Identity is keyed on `(Provider.Kind, Provider.Host, ProviderID)`. Field-level diff relies on all `PullRequest` fields being comparable — no map fields are used; slices and structs are compared field-by-field. `HeadSHA` is the signal for `pr.new_commit` detection. `LoadResult[T]` state transitions (Pending → Loaded) do not trigger events; only value changes in loaded fields do.
+- **Event Engine (ADR-007)**: the `PullRequest` type is the unit of comparison in the delta engine. Identity is keyed on `(Provider.Kind, Provider.Host, ProviderID)`. Field-level diff relies on all `PullRequest` fields being comparable — no map fields are used; slices and structs are compared field-by-field. `HeadSHA` is the signal for `pr.new_commit` detection. `LoadResult[T]` state transitions (Pending → Loaded) do not trigger events; only value changes in loaded fields do. This is a second reason to wrap deferred fields rather than leave them bare at a sentinel: an unwrapped `Mergeable` going `"" → "conflicting"` on its first fetch is indistinguishable from a real mergeability change, and would fire a spurious event.

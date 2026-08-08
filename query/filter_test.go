@@ -201,11 +201,65 @@ func TestCompile_ReviewStatus_None(t *testing.T) {
 		t.Fatalf("Compile() error: %v", err)
 	}
 
-	if !predicate(githubPR()) {
-		t.Error("expected PR with no review state to match review_status=none")
+	if !predicate(githubPR(withAggregateReview(model.AggregateReviewStateNone))) {
+		t.Error("expected a PR computed to have no reviews to match review_status=none")
 	}
 	if predicate(githubPR(withAggregateReview(model.AggregateReviewStateApproved))) {
 		t.Error("expected approved PR to not match review_status=none")
+	}
+}
+
+// TestCompile_ReviewStatus_UnknownMatchesEverything pins ADR-010 §2(d), "unknown
+// matches, known compares". An uncomputed aggregate stays visible and drains out of
+// the view as its data arrives. Excluding it instead would make approved,
+// changes_requested, commented and none match nothing at all in the shipping GitHub
+// adapter, which only ever derives review_required or nothing — ADR-010's own
+// Context §2, and the defect the ADR exists to remove.
+func TestCompile_ReviewStatus_UnknownMatchesEverything(t *testing.T) {
+	for _, status := range []string{"none", "approved", "changes_requested", "review_required", "commented"} {
+		t.Run(status, func(t *testing.T) {
+			predicate, err := query.PRFilterSpec{ReviewStatus: status}.Compile(resolvedMe)
+			if err != nil {
+				t.Fatalf("Compile() error: %v", err)
+			}
+			if !predicate(githubPR()) {
+				t.Errorf("PR with an uncomputed aggregate did not match review_status=%s", status)
+			}
+		})
+	}
+}
+
+// TestCompile_ReviewStatus_DerivedRequiredIsCompared is the other half of §2(d), and
+// the reason the rule reads AggregateState rather than ReviewerStates.IsPending().
+// A PR with requested reviewers has a derived review_required — a known value, even
+// though the full reviewer states have not loaded — so it compares. A blanket
+// "still loading → match" would discard that and let a PR known to need review
+// match review_status=approved.
+func TestCompile_ReviewStatus_DerivedRequiredIsCompared(t *testing.T) {
+	derivedRequired := githubPR(withAggregateReview(model.AggregateReviewStateRequired))
+
+	approvedPredicate, err := query.PRFilterSpec{ReviewStatus: "approved"}.Compile(resolvedMe)
+	if err != nil {
+		t.Fatalf("Compile() error: %v", err)
+	}
+	if approvedPredicate(derivedRequired) {
+		t.Error("a PR derived as review_required matched review_status=approved")
+	}
+
+	requiredPredicate, err := query.PRFilterSpec{ReviewStatus: "review_required"}.Compile(resolvedMe)
+	if err != nil {
+		t.Fatalf("Compile() error: %v", err)
+	}
+	if !requiredPredicate(derivedRequired) {
+		t.Error("a PR derived as review_required did not match review_status=review_required")
+	}
+}
+
+// TestCompile_ReviewStatus_UnknownIsNotUserInput keeps prsm's internal bookkeeping
+// out of the filter vocabulary: "unknown" is a state prsm assigns, not one a user asks for.
+func TestCompile_ReviewStatus_UnknownIsNotUserInput(t *testing.T) {
+	if _, err := (query.PRFilterSpec{ReviewStatus: "unknown"}).Compile(resolvedMe); err == nil {
+		t.Error("expected review_status=unknown to be rejected")
 	}
 }
 

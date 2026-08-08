@@ -30,7 +30,15 @@ type Repository struct {
 type MergeableState string
 
 const (
-	MergeableStateUnknown     MergeableState = "" // zero value; not yet computed by provider
+	// MergeableStateUnknown is the zero value: the provider has not told us. Reached
+	// through a Loaded LoadResult it means the provider was asked and is still
+	// computing mergeability; a Pending LoadResult means prsm has not asked at all.
+	MergeableStateUnknown     MergeableState = ""
 	MergeableStateMergeable   MergeableState = "mergeable"
 	MergeableStateConflicting MergeableState = "conflicting"
 )
+
+// IsKnown reports whether the provider has reported mergeability. False for the zero value.
+func (mergeableState MergeableState) IsKnown() bool {
+	return mergeableState != MergeableStateUnknown
+}

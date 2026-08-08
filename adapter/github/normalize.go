@@ -11,12 +11,15 @@ import (
 )
 
 // normalizePR maps a GitHub REST pull request to model.PullRequest.
-// All list-time fields are populated; lazy fields (CI, ReviewerStates, Diff)
-// are set to LoadStatePending.
+// All list-time fields are populated; lazy fields (CI, ReviewerStates, Diff,
+// Mergeable, CommentCount) are set to LoadStatePending.
 //
-// Fields not available from the REST list endpoint:
-//   - CommentCount: not returned by GET /pulls; set to zero until a future lazy load
-//   - Mergeable: not computed by GitHub at list time; set to MergeableStateUnknown
+// Fields not available from the REST list endpoint, left Pending here:
+//   - CommentCount: not returned by GET /pulls
+//   - Mergeable: not computed by GitHub at list time
+//
+// Both are available at list time on GitLab and Gitea, so the wrappers are what
+// let one model serve all three without any of them lying about what it knows.
 func normalizePR(githubPullRequest *gogithub.PullRequest, owner, repo string, instance model.ProviderInstance) model.PullRequest {
 	result := model.PullRequest{
 		ProviderID:   githubPullRequest.GetNodeID(),
@@ -32,6 +35,8 @@ func normalizePR(githubPullRequest *gogithub.PullRequest, owner, repo string, in
 		Repo:         model.Repository{Owner: owner, Name: repo},
 		CI:           model.Pending[model.CIStatus](),
 		Diff:         model.Pending[model.DiffStats](),
+		Mergeable:    model.Pending[model.MergeableState](),
+		CommentCount: model.Pending[int](),
 		CreatedAt:    githubPullRequest.GetCreatedAt().Time,
 		UpdatedAt:    githubPullRequest.GetUpdatedAt().Time,
 	}
@@ -97,6 +102,11 @@ func normalizeLabels(labels []*gogithub.Label) []model.Label {
 // normalizeReviewSummary builds a ReviewSummary from the REST list-time
 // requested_reviewers field. ReviewerStates starts as Pending.
 // AggregateState is conservatively set to ReviewRequired if any requestee exists.
+//
+// With no requested reviewers there is nothing to conclude at list time, so
+// AggregateState is left at its zero value — AggregateReviewStateUnknown. That is
+// deliberate and load-bearing: claiming AggregateReviewStateNone here would assert
+// "this PR has no reviews" about a PR whose reviews have never been fetched.
 func normalizeReviewSummary(reviewers []*gogithub.User) model.ReviewSummary {
 	reviewSummary := model.ReviewSummary{
 		ReviewerStates: model.Pending[[]model.ReviewerState](),
