@@ -141,6 +141,7 @@ Key decisions are documented in `docs/decisions/`. Read the relevant ADR before 
 - [ADR-007: Event Engine and Hook System](docs/decisions/ADR-007-event-engine.md)
 - [ADR-008: Adapter Constructor Inputs](docs/decisions/ADR-008-adapter-constructor-inputs.md)
 - [ADR-009: Assembly Layer and Library Surface](docs/decisions/ADR-009-assembly-layer-and-library-surface.md)
+- [ADR-010: Filter Semantics](docs/decisions/ADR-010-filter-semantics.md) — amends ADR-000, ADR-004, ADR-005, ADR-006, ADR-009
 
 Exploratory research that predates or supports these decisions lives in `docs/decisions/research/` — notably `cli-framework.md` (the cobra decision), `project-structure.md`, and the multi-resource query notes. It is not indexed above because it records investigation rather than accepted decisions.
 
