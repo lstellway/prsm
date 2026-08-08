@@ -38,8 +38,8 @@ func ComputeAggregateReviewState(states []ReviewerState) AggregateReviewState {
 	}
 
 	var hasChangesRequested, hasApproved, hasCommented, hasPending bool
-	for _, s := range states {
-		switch s.Decision {
+	for _, reviewerState := range states {
+		switch reviewerState.Decision {
 		case ReviewDecisionChangesRequested:
 			hasChangesRequested = true
 		case ReviewDecisionApproved:

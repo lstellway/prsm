@@ -17,34 +17,34 @@ import (
 // Fields not available from the REST list endpoint:
 //   - CommentCount: not returned by GET /pulls; set to zero until a future lazy load
 //   - Mergeable: not computed by GitHub at list time; set to MergeableStateUnknown
-func normalizePR(pr *gogithub.PullRequest, owner, repo string, instance model.ProviderInstance) model.PullRequest {
+func normalizePR(githubPullRequest *gogithub.PullRequest, owner, repo string, instance model.ProviderInstance) model.PullRequest {
 	result := model.PullRequest{
-		ProviderID:   pr.GetNodeID(),
-		Number:       pr.GetNumber(),
+		ProviderID:   githubPullRequest.GetNodeID(),
+		Number:       githubPullRequest.GetNumber(),
 		Provider:     instance,
-		URL:          pr.GetHTMLURL(),
-		Title:        pr.GetTitle(),
-		Body:         pr.GetBody(),
-		SourceBranch: pr.GetHead().GetRef(),
-		TargetBranch: pr.GetBase().GetRef(),
-		HeadSHA:      pr.GetHead().GetSHA(),
-		Draft:        pr.GetDraft(),
+		URL:          githubPullRequest.GetHTMLURL(),
+		Title:        githubPullRequest.GetTitle(),
+		Body:         githubPullRequest.GetBody(),
+		SourceBranch: githubPullRequest.GetHead().GetRef(),
+		TargetBranch: githubPullRequest.GetBase().GetRef(),
+		HeadSHA:      githubPullRequest.GetHead().GetSHA(),
+		Draft:        githubPullRequest.GetDraft(),
 		Repo:         model.Repository{Owner: owner, Name: repo},
 		CI:           model.Pending[model.CIStatus](),
 		Diff:         model.Pending[model.DiffStats](),
-		CreatedAt:    pr.GetCreatedAt().Time,
-		UpdatedAt:    pr.GetUpdatedAt().Time,
+		CreatedAt:    githubPullRequest.GetCreatedAt().Time,
+		UpdatedAt:    githubPullRequest.GetUpdatedAt().Time,
 	}
 
-	if mergedAt := pr.GetMergedAt(); !mergedAt.IsZero() {
-		cp := mergedAt.Time
-		result.MergedAt = &cp
+	if mergedAt := githubPullRequest.GetMergedAt(); !mergedAt.IsZero() {
+		mergedAtCopy := mergedAt.Time
+		result.MergedAt = &mergedAtCopy
 	}
 
-	result.State = normalizePRState(pr.GetState(), pr.GetDraft(), result.MergedAt != nil)
-	result.Author = normalizeIdentity(pr.GetUser().GetLogin(), "", pr.GetUser().GetAvatarURL())
-	result.Labels = normalizeLabels(pr.Labels)
-	result.Reviews = normalizeReviewSummary(pr.RequestedReviewers)
+	result.State = normalizePRState(githubPullRequest.GetState(), githubPullRequest.GetDraft(), result.MergedAt != nil)
+	result.Author = normalizeIdentity(githubPullRequest.GetUser().GetLogin(), "", githubPullRequest.GetUser().GetAvatarURL())
+	result.Labels = normalizeLabels(githubPullRequest.Labels)
+	result.Reviews = normalizeReviewSummary(githubPullRequest.RequestedReviewers)
 
 	return result
 }
@@ -84,12 +84,12 @@ func normalizeLabels(labels []*gogithub.Label) []model.Label {
 		return nil
 	}
 	result := make([]model.Label, len(labels))
-	for i, l := range labels {
-		color := l.GetColor()
+	for index, label := range labels {
+		color := label.GetColor()
 		if color != "" && !strings.HasPrefix(color, "#") {
 			color = "#" + color
 		}
-		result[i] = model.Label{Name: l.GetName(), Color: color}
+		result[index] = model.Label{Name: label.GetName(), Color: color}
 	}
 	return result
 }
@@ -98,29 +98,29 @@ func normalizeLabels(labels []*gogithub.Label) []model.Label {
 // requested_reviewers field. ReviewerStates starts as Pending.
 // AggregateState is conservatively set to ReviewRequired if any requestee exists.
 func normalizeReviewSummary(reviewers []*gogithub.User) model.ReviewSummary {
-	rs := model.ReviewSummary{
+	reviewSummary := model.ReviewSummary{
 		ReviewerStates: model.Pending[[]model.ReviewerState](),
 	}
 
-	for _, u := range reviewers {
-		if u.GetLogin() == "" {
+	for _, user := range reviewers {
+		if user.GetLogin() == "" {
 			continue
 		}
-		rs.RequestedReviewers = append(rs.RequestedReviewers, model.ReviewerState{
+		reviewSummary.RequestedReviewers = append(reviewSummary.RequestedReviewers, model.ReviewerState{
 			Reviewer: model.Identity{
-				Username:    u.GetLogin(),
-				DisplayName: u.GetLogin(), // display name not available in REST list user objects
-				AvatarURL:   u.GetAvatarURL(),
+				Username:    user.GetLogin(),
+				DisplayName: user.GetLogin(), // display name not available in REST list user objects
+				AvatarURL:   user.GetAvatarURL(),
 			},
 			Decision: model.ReviewDecisionPending,
 		})
 	}
 
-	if len(rs.RequestedReviewers) > 0 {
-		rs.AggregateState = model.AggregateReviewStateRequired
+	if len(reviewSummary.RequestedReviewers) > 0 {
+		reviewSummary.AggregateState = model.AggregateReviewStateRequired
 	}
 
-	return rs
+	return reviewSummary
 }
 
 // normalizeCIStatus maps GitHub check run conclusions to CIStatus.
@@ -130,9 +130,9 @@ func normalizeCIStatus(runs []*gogithub.CheckRun) model.CIStatus {
 	}
 
 	var passing, failing, pending int
-	for _, r := range runs {
-		conclusion := strings.ToLower(r.GetConclusion())
-		status := strings.ToLower(r.GetStatus())
+	for _, checkRun := range runs {
+		conclusion := strings.ToLower(checkRun.GetConclusion())
+		status := strings.ToLower(checkRun.GetStatus())
 
 		switch {
 		case conclusion == "success":
@@ -190,13 +190,13 @@ func normalizeReviewDecision(state string) model.ReviewDecision {
 func normalizeReviewerStates(reviews []*gogithub.PullRequestReview) []model.ReviewerState {
 	seen := make(map[string]model.ReviewDecision)
 	names := make(map[string]string)
-	for _, r := range reviews {
-		login := r.GetUser().GetLogin()
+	for _, review := range reviews {
+		login := review.GetUser().GetLogin()
 		if login == "" {
 			continue
 		}
-		seen[login] = normalizeReviewDecision(r.GetState())
-		names[login] = r.GetUser().GetName()
+		seen[login] = normalizeReviewDecision(review.GetState())
+		names[login] = review.GetUser().GetName()
 	}
 
 	if len(seen) == 0 {
@@ -217,8 +217,8 @@ func normalizeReviewerStates(reviews []*gogithub.PullRequestReview) []model.Revi
 			Decision: decision,
 		})
 	}
-	slices.SortFunc(states, func(a, b model.ReviewerState) int {
-		return cmp.Compare(a.Reviewer.Username, b.Reviewer.Username)
+	slices.SortFunc(states, func(left, right model.ReviewerState) int {
+		return cmp.Compare(left.Reviewer.Username, right.Reviewer.Username)
 	})
 	return states
 }

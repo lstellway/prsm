@@ -29,13 +29,13 @@ type ProviderAdapter interface {
 	ListPullRequests(ctx context.Context) ([]model.PullRequest, error)
 
 	// LoadCI fetches CI status for a single PR and returns the updated value.
-	LoadCI(ctx context.Context, pr model.PullRequest) (model.CIStatus, error)
+	LoadCI(ctx context.Context, pullRequest model.PullRequest) (model.CIStatus, error)
 
 	// LoadReviewerStates fetches full reviewer decisions for a single PR.
-	LoadReviewerStates(ctx context.Context, pr model.PullRequest) ([]model.ReviewerState, error)
+	LoadReviewerStates(ctx context.Context, pullRequest model.PullRequest) ([]model.ReviewerState, error)
 
 	// LoadDiff fetches commit and file-change counts for a single PR.
-	LoadDiff(ctx context.Context, pr model.PullRequest) (model.DiffStats, error)
+	LoadDiff(ctx context.Context, pullRequest model.PullRequest) (model.DiffStats, error)
 
 	// ResolveIdentity returns the authenticated user's identity for this provider.
 	// Called once at startup to resolve "me" sentinels in filters.

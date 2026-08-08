@@ -17,16 +17,16 @@ type RateLimitError struct {
 	RetryAfter time.Time
 }
 
-func (e RateLimitError) Error() string {
-	return fmt.Sprintf("rate limit exceeded on %s, retry after %s", e.Instance.Host, e.RetryAfter)
+func (rateLimitError RateLimitError) Error() string {
+	return fmt.Sprintf("rate limit exceeded on %s, retry after %s", rateLimitError.Instance.Host, rateLimitError.RetryAfter)
 }
 
 // AuthError is returned when the adapter's credentials are invalid or have expired.
 type AuthError struct{}
 
-func (e AuthError) Error() string { return "authentication failed" }
+func (authError AuthError) Error() string { return "authentication failed" }
 
 // NotFoundError is returned when the requested resource does not exist.
 type NotFoundError struct{}
 
-func (e NotFoundError) Error() string { return "not found" }
+func (notFoundError NotFoundError) Error() string { return "not found" }

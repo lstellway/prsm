@@ -31,43 +31,43 @@ type SortSpec struct {
 	Direction SortDirection
 }
 
-// Sort returns a new slice sorted according to spec. The input is not modified.
+// Sort returns a new slice sorted according to sortSpec. The input is not modified.
 // A zero SortSpec (By == "") returns a copy in the original order.
-func Sort(prs []model.PullRequest, spec SortSpec) []model.PullRequest {
-	result := make([]model.PullRequest, len(prs))
-	copy(result, prs)
+func Sort(pullRequests []model.PullRequest, sortSpec SortSpec) []model.PullRequest {
+	result := make([]model.PullRequest, len(pullRequests))
+	copy(result, pullRequests)
 
-	if spec.By == "" {
+	if sortSpec.By == "" {
 		return result
 	}
 
-	sort.SliceStable(result, func(i, j int) bool {
-		return less(result[i], result[j], spec)
+	sort.SliceStable(result, func(leftIndex, rightIndex int) bool {
+		return less(result[leftIndex], result[rightIndex], sortSpec)
 	})
 
 	return result
 }
 
-func less(a, b model.PullRequest, spec SortSpec) bool {
-	var asc bool
-	switch spec.By {
+func less(left, right model.PullRequest, sortSpec SortSpec) bool {
+	var ascending bool
+	switch sortSpec.By {
 	case SortUpdated:
-		asc = a.UpdatedAt.Before(b.UpdatedAt)
+		ascending = left.UpdatedAt.Before(right.UpdatedAt)
 	case SortCreated:
-		asc = a.CreatedAt.Before(b.CreatedAt)
+		ascending = left.CreatedAt.Before(right.CreatedAt)
 	case SortStaleness:
 		// Staleness = days since UpdatedAt. Ascending = smallest staleness first (recently updated).
 		// Direction is intentionally inverted relative to SortUpdated so that desc = most stale first,
 		// matching the user's mental model of "staleness" as a magnitude (higher = more stale).
-		asc = a.UpdatedAt.After(b.UpdatedAt)
+		ascending = left.UpdatedAt.After(right.UpdatedAt)
 	case SortTitle:
-		asc = strings.ToLower(a.Title) < strings.ToLower(b.Title)
+		ascending = strings.ToLower(left.Title) < strings.ToLower(right.Title)
 	default:
 		return false
 	}
 
-	if spec.Direction == SortDesc {
-		return !asc
+	if sortSpec.Direction == SortDesc {
+		return !ascending
 	}
-	return asc
+	return ascending
 }

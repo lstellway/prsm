@@ -11,31 +11,31 @@ import (
 
 // checkRateLimit inspects GitHub rate-limit headers and returns a RateLimitError
 // when the remaining budget is zero. Returns nil when within budget.
-func checkRateLimit(instance model.ProviderInstance, resp *http.Response) error {
-	if resp == nil {
+func checkRateLimit(instance model.ProviderInstance, response *http.Response) error {
+	if response == nil {
 		return nil
 	}
 
-	remaining := resp.Header.Get("X-RateLimit-Remaining")
+	remaining := response.Header.Get("X-RateLimit-Remaining")
 	if remaining == "" {
 		return nil
 	}
 
-	n, err := strconv.Atoi(remaining)
-	if err != nil || n > 0 {
+	remainingCount, err := strconv.Atoi(remaining)
+	if err != nil || remainingCount > 0 {
 		return nil
 	}
 
-	rl := adapter.RateLimitError{Instance: instance}
+	rateLimitErr := adapter.RateLimitError{Instance: instance}
 
 	// X-RateLimit-Reset is a Unix timestamp; prefer it over Retry-After.
-	if reset := resp.Header.Get("X-RateLimit-Reset"); reset != "" {
-		if ts, err := strconv.ParseInt(reset, 10, 64); err == nil {
-			rl.RetryAfter = time.Unix(ts, 0)
+	if reset := response.Header.Get("X-RateLimit-Reset"); reset != "" {
+		if resetTimestamp, err := strconv.ParseInt(reset, 10, 64); err == nil {
+			rateLimitErr.RetryAfter = time.Unix(resetTimestamp, 0)
 		}
-	} else if ra := resp.Header.Get("Retry-After"); ra != "" {
-		if secs, err := strconv.Atoi(ra); err == nil {
-			rl.RetryAfter = time.Now().Add(time.Duration(secs) * time.Second)
+	} else if retryAfterHeader := response.Header.Get("Retry-After"); retryAfterHeader != "" {
+		if seconds, err := strconv.Atoi(retryAfterHeader); err == nil {
+			rateLimitErr.RetryAfter = time.Now().Add(time.Duration(seconds) * time.Second)
 		}
 	}
 
@@ -43,9 +43,9 @@ func checkRateLimit(instance model.ProviderInstance, resp *http.Response) error 
 	// a mistake or adversarial. ADR-003 specifies the poller will sleep until
 	// RetryAfter, so an uncapped value would freeze polling indefinitely.
 	const maxRetryAfter = time.Hour
-	if !rl.RetryAfter.IsZero() && rl.RetryAfter.After(time.Now().Add(maxRetryAfter)) {
-		rl.RetryAfter = time.Now().Add(maxRetryAfter)
+	if !rateLimitErr.RetryAfter.IsZero() && rateLimitErr.RetryAfter.After(time.Now().Add(maxRetryAfter)) {
+		rateLimitErr.RetryAfter = time.Now().Add(maxRetryAfter)
 	}
 
-	return rl
+	return rateLimitErr
 }

@@ -14,9 +14,9 @@ import (
 // If-None-Match on repeat requests and serve 304 responses from cache at zero
 // rate-limit cost (GitHub exempts 304s from the primary request budget).
 func newHTTPClient(token string) *http.Client {
-	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
+	tokenSource := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})
 	oauthTransport := &oauth2.Transport{
-		Source: ts,
+		Source: tokenSource,
 		Base:   http.DefaultTransport,
 	}
 	return &http.Client{

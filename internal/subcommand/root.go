@@ -3,12 +3,12 @@ package subcommand
 import "github.com/spf13/cobra"
 
 func Root() *cobra.Command {
-	tui := TUICommand()
-	root := &cobra.Command{
+	tuiCommand := TUICommand()
+	rootCommand := &cobra.Command{
 		Use:   "prsm",
 		Short: "PR inbox for engineers on fast-moving teams",
-		RunE:  tui.RunE,
+		RunE:  tuiCommand.RunE,
 	}
-	root.AddCommand(tui, ServeCommand(), VersionCommand())
-	return root
+	rootCommand.AddCommand(tuiCommand, ServeCommand(), VersionCommand())
+	return rootCommand
 }

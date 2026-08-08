@@ -14,20 +14,20 @@ type Result struct {
 // A nil filter passes all PRs through. When fuzzyQuery is empty the sort order is
 // preserved; when non-empty, results are re-ranked by fuzzy score, overriding sort order.
 func Apply(
-	prs []model.PullRequest,
+	pullRequests []model.PullRequest,
 	filter Predicate[model.PullRequest],
-	sort SortSpec,
-	group GroupSpec,
+	sortSpec SortSpec,
+	groupSpec GroupSpec,
 	fuzzyQuery string,
 ) Result {
-	filtered := make([]model.PullRequest, 0, len(prs))
-	for _, pr := range prs {
-		if filter == nil || filter(pr) {
-			filtered = append(filtered, pr)
+	filtered := make([]model.PullRequest, 0, len(pullRequests))
+	for _, pullRequest := range pullRequests {
+		if filter == nil || filter(pullRequest) {
+			filtered = append(filtered, pullRequest)
 		}
 	}
 
-	sorted := Sort(filtered, sort)
+	sorted := Sort(filtered, sortSpec)
 
 	shown := sorted
 	if fuzzyQuery != "" {
@@ -35,8 +35,8 @@ func Apply(
 	}
 
 	return Result{
-		Groups:   GroupBy(shown, group),
-		Total:    len(prs),
+		Groups:   GroupBy(shown, groupSpec),
+		Total:    len(pullRequests),
 		Filtered: len(filtered),
 		Shown:    len(shown),
 	}

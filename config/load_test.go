@@ -124,8 +124,8 @@ by = "repo"
 
 func writeTemp(t *testing.T, content string) string {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
+	directory := t.TempDir()
+	path := filepath.Join(directory, "config.toml")
 	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -139,25 +139,25 @@ func TestLoadFile_ADR005Example(t *testing.T) {
 	t.Setenv("PRSM_TEST_GITLAB_TOKEN", "glpat_fake")
 	t.Setenv("PRSM_TEST_CODEBERG_TOKEN", "cb_fake")
 
-	cfg, err := config.LoadFile(writeTemp(t, adr005Example))
+	loadedConfig, err := config.LoadFile(writeTemp(t, adr005Example))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(cfg.Providers) != 3 {
-		t.Fatalf("expected 3 providers, got %d", len(cfg.Providers))
+	if len(loadedConfig.Providers) != 3 {
+		t.Fatalf("expected 3 providers, got %d", len(loadedConfig.Providers))
 	}
-	if len(cfg.Views) != 4 {
-		t.Fatalf("expected 4 views, got %d", len(cfg.Views))
+	if len(loadedConfig.Views) != 4 {
+		t.Fatalf("expected 4 views, got %d", len(loadedConfig.Views))
 	}
-	if cfg.Defaults.DefaultView != "my-reviews" {
-		t.Errorf("defaults.default_view = %q, want %q", cfg.Defaults.DefaultView, "my-reviews")
+	if loadedConfig.Defaults.DefaultView != "my-reviews" {
+		t.Errorf("defaults.default_view = %q, want %q", loadedConfig.Defaults.DefaultView, "my-reviews")
 	}
-	if cfg.Providers[0].Auth.Token != "ghp_fake" {
-		t.Errorf("provider[0] token after expansion = %q, want %q", cfg.Providers[0].Auth.Token, "ghp_fake")
+	if loadedConfig.Providers[0].Auth.Token != "ghp_fake" {
+		t.Errorf("provider[0] token after expansion = %q, want %q", loadedConfig.Providers[0].Auth.Token, "ghp_fake")
 	}
 
-	draft := cfg.Views[0].Filter.Draft
+	draft := loadedConfig.Views[0].Filter.Draft
 	if draft == nil || *draft != false {
 		t.Errorf("views[0].filter.draft = %v, want *false", draft)
 	}
@@ -752,15 +752,15 @@ type     = "basic"
 username = "myuser"
 password = "$PRSM_TEST_BASIC_PWD"
 `
-	cfg, err := config.LoadFile(writeTemp(t, content))
+	loadedConfig, err := config.LoadFile(writeTemp(t, content))
 	if err != nil {
 		t.Fatalf("unexpected error for valid basic auth: %v", err)
 	}
-	if cfg.Providers[0].Auth.Username != "myuser" {
-		t.Errorf("username = %q, want %q", cfg.Providers[0].Auth.Username, "myuser")
+	if loadedConfig.Providers[0].Auth.Username != "myuser" {
+		t.Errorf("username = %q, want %q", loadedConfig.Providers[0].Auth.Username, "myuser")
 	}
-	if cfg.Providers[0].Auth.Password != "secret" {
-		t.Errorf("password after expansion = %q, want %q", cfg.Providers[0].Auth.Password, "secret")
+	if loadedConfig.Providers[0].Auth.Password != "secret" {
+		t.Errorf("password after expansion = %q, want %q", loadedConfig.Providers[0].Auth.Password, "secret")
 	}
 }
 
@@ -768,7 +768,7 @@ password = "$PRSM_TEST_BASIC_PWD"
 func TestFilterConfig_StringSlice(t *testing.T) {
 	t.Setenv("PRSM_TEST_TOK", "tok")
 
-	single := `
+	singleRepoContent := `
 [[providers]]
 name = "gh"
 type = "github"
@@ -782,15 +782,15 @@ resource = "pr"
 [views.filter]
 repo = "owner/single"
 `
-	cfg, err := config.LoadFile(writeTemp(t, single))
+	loadedConfig, err := config.LoadFile(writeTemp(t, singleRepoContent))
 	if err != nil {
 		t.Fatalf("single-string repo: %v", err)
 	}
-	if len(cfg.Views[0].Filter.Repo) != 1 || cfg.Views[0].Filter.Repo[0] != "owner/single" {
-		t.Errorf("single-string repo: got %v", cfg.Views[0].Filter.Repo)
+	if len(loadedConfig.Views[0].Filter.Repo) != 1 || loadedConfig.Views[0].Filter.Repo[0] != "owner/single" {
+		t.Errorf("single-string repo: got %v", loadedConfig.Views[0].Filter.Repo)
 	}
 
-	multi := `
+	multiRepoContent := `
 [[providers]]
 name = "gh"
 type = "github"
@@ -804,11 +804,11 @@ resource = "pr"
 [views.filter]
 repo = ["owner/a", "owner/b"]
 `
-	cfg, err = config.LoadFile(writeTemp(t, multi))
+	loadedConfig, err = config.LoadFile(writeTemp(t, multiRepoContent))
 	if err != nil {
 		t.Fatalf("array repo: %v", err)
 	}
-	if len(cfg.Views[0].Filter.Repo) != 2 {
-		t.Errorf("array repo: got %v", cfg.Views[0].Filter.Repo)
+	if len(loadedConfig.Views[0].Filter.Repo) != 2 {
+		t.Errorf("array repo: got %v", loadedConfig.Views[0].Filter.Repo)
 	}
 }

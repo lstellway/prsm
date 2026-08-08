@@ -13,37 +13,37 @@ import (
 	"github.com/lstellway/prsm/model"
 )
 
-// ptr returns a pointer to v. Used to construct go-github SDK structs that use
-// pointer fields for all optional values.
-func ptr[T any](v T) *T { return &v }
+// pointerTo returns a pointer to value. Used to construct go-github SDK structs that
+// use pointer fields for all optional values.
+func pointerTo[T any](value T) *T { return &value }
 
 func makeCheckRun(status, conclusion string) *gogithub.CheckRun {
-	r := &gogithub.CheckRun{}
+	checkRun := &gogithub.CheckRun{}
 	if status != "" {
-		r.Status = ptr(status)
+		checkRun.Status = pointerTo(status)
 	}
 	if conclusion != "" {
-		r.Conclusion = ptr(conclusion)
+		checkRun.Conclusion = pointerTo(conclusion)
 	}
-	return r
+	return checkRun
 }
 
 func makeReview(login, name, state string) *gogithub.PullRequestReview {
 	return &gogithub.PullRequestReview{
-		State: ptr(state),
+		State: pointerTo(state),
 		User: &gogithub.User{
-			Login: ptr(login),
-			Name:  ptr(name),
+			Login: pointerTo(login),
+			Name:  pointerTo(name),
 		},
 	}
 }
 
-func makeResp(headers map[string]string) *http.Response {
-	h := http.Header{}
-	for k, v := range headers {
-		h.Set(k, v)
+func makeResponse(headers map[string]string) *http.Response {
+	header := http.Header{}
+	for name, value := range headers {
+		header.Set(name, value)
 	}
-	return &http.Response{Header: h}
+	return &http.Response{Header: header}
 }
 
 // ---------------------------------------------------------------------------
@@ -52,10 +52,10 @@ func makeResp(headers map[string]string) *http.Response {
 
 func TestNormalizeCIStatus(t *testing.T) {
 	cases := []struct {
-		name            string
-		runs            []*gogithub.CheckRun
-		wantState       model.CIState
-		wantSummaryHas  string
+		name           string
+		runs           []*gogithub.CheckRun
+		wantState      model.CIState
+		wantSummaryHas string
 	}{
 		{
 			name:      "nil_runs",
@@ -143,14 +143,14 @@ func TestNormalizeCIStatus(t *testing.T) {
 		},
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := normalizeCIStatus(tc.runs)
-			if got.State != tc.wantState {
-				t.Errorf("State = %q, want %q", got.State, tc.wantState)
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := normalizeCIStatus(testCase.runs)
+			if got.State != testCase.wantState {
+				t.Errorf("State = %q, want %q", got.State, testCase.wantState)
 			}
-			if tc.wantSummaryHas != "" && !strings.Contains(got.Summary, tc.wantSummaryHas) {
-				t.Errorf("Summary = %q, want it to contain %q", got.Summary, tc.wantSummaryHas)
+			if testCase.wantSummaryHas != "" && !strings.Contains(got.Summary, testCase.wantSummaryHas) {
+				t.Errorf("Summary = %q, want it to contain %q", got.Summary, testCase.wantSummaryHas)
 			}
 		})
 	}
@@ -160,7 +160,7 @@ func TestNormalizeCIStatus(t *testing.T) {
 // normalizeAggregateState
 // ---------------------------------------------------------------------------
 
-func rs(decision model.ReviewDecision) model.ReviewerState {
+func reviewerStateWith(decision model.ReviewDecision) model.ReviewerState {
 	return model.ReviewerState{Decision: decision}
 }
 
@@ -171,18 +171,18 @@ func TestNormalizeAggregateState(t *testing.T) {
 		want   model.AggregateReviewState
 	}{
 		{"empty", nil, model.AggregateReviewStateNone},
-		{"single_approved", []model.ReviewerState{rs(model.ReviewDecisionApproved)}, model.AggregateReviewStateApproved},
-		{"single_pending", []model.ReviewerState{rs(model.ReviewDecisionPending)}, model.AggregateReviewStateRequired},
-		{"single_commented", []model.ReviewerState{rs(model.ReviewDecisionCommented)}, model.AggregateReviewStateCommented},
-		{"single_changes_requested", []model.ReviewerState{rs(model.ReviewDecisionChangesRequested)}, model.AggregateReviewStateChangesRequested},
-		{"changes_requested_beats_approved", []model.ReviewerState{rs(model.ReviewDecisionApproved), rs(model.ReviewDecisionChangesRequested)}, model.AggregateReviewStateChangesRequested},
-		{"changes_requested_beats_pending", []model.ReviewerState{rs(model.ReviewDecisionPending), rs(model.ReviewDecisionChangesRequested)}, model.AggregateReviewStateChangesRequested},
-		{"pending_beats_approved", []model.ReviewerState{rs(model.ReviewDecisionApproved), rs(model.ReviewDecisionPending)}, model.AggregateReviewStateRequired},
-		{"pending_beats_commented", []model.ReviewerState{rs(model.ReviewDecisionCommented), rs(model.ReviewDecisionPending)}, model.AggregateReviewStateRequired},
-		{"approved_beats_commented", []model.ReviewerState{rs(model.ReviewDecisionCommented), rs(model.ReviewDecisionApproved)}, model.AggregateReviewStateApproved},
+		{"single_approved", []model.ReviewerState{reviewerStateWith(model.ReviewDecisionApproved)}, model.AggregateReviewStateApproved},
+		{"single_pending", []model.ReviewerState{reviewerStateWith(model.ReviewDecisionPending)}, model.AggregateReviewStateRequired},
+		{"single_commented", []model.ReviewerState{reviewerStateWith(model.ReviewDecisionCommented)}, model.AggregateReviewStateCommented},
+		{"single_changes_requested", []model.ReviewerState{reviewerStateWith(model.ReviewDecisionChangesRequested)}, model.AggregateReviewStateChangesRequested},
+		{"changes_requested_beats_approved", []model.ReviewerState{reviewerStateWith(model.ReviewDecisionApproved), reviewerStateWith(model.ReviewDecisionChangesRequested)}, model.AggregateReviewStateChangesRequested},
+		{"changes_requested_beats_pending", []model.ReviewerState{reviewerStateWith(model.ReviewDecisionPending), reviewerStateWith(model.ReviewDecisionChangesRequested)}, model.AggregateReviewStateChangesRequested},
+		{"pending_beats_approved", []model.ReviewerState{reviewerStateWith(model.ReviewDecisionApproved), reviewerStateWith(model.ReviewDecisionPending)}, model.AggregateReviewStateRequired},
+		{"pending_beats_commented", []model.ReviewerState{reviewerStateWith(model.ReviewDecisionCommented), reviewerStateWith(model.ReviewDecisionPending)}, model.AggregateReviewStateRequired},
+		{"approved_beats_commented", []model.ReviewerState{reviewerStateWith(model.ReviewDecisionCommented), reviewerStateWith(model.ReviewDecisionApproved)}, model.AggregateReviewStateApproved},
 		{
 			"all_four_decisions",
-			[]model.ReviewerState{rs(model.ReviewDecisionApproved), rs(model.ReviewDecisionCommented), rs(model.ReviewDecisionPending), rs(model.ReviewDecisionChangesRequested)},
+			[]model.ReviewerState{reviewerStateWith(model.ReviewDecisionApproved), reviewerStateWith(model.ReviewDecisionCommented), reviewerStateWith(model.ReviewDecisionPending), reviewerStateWith(model.ReviewDecisionChangesRequested)},
 			model.AggregateReviewStateChangesRequested,
 		},
 		// DESIGN DECISION NEEDED: ReviewDecisionDismissed is not handled in the
@@ -191,16 +191,16 @@ func TestNormalizeAggregateState(t *testing.T) {
 		// decision) or be ignored. The test below encodes current behavior.
 		{
 			"dismissed_currently_produces_none",
-			[]model.ReviewerState{rs(model.ReviewDecisionDismissed)},
+			[]model.ReviewerState{reviewerStateWith(model.ReviewDecisionDismissed)},
 			model.AggregateReviewStateNone,
 		},
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := model.ComputeAggregateReviewState(tc.states)
-			if got != tc.want {
-				t.Errorf("ComputeAggregateReviewState = %q, want %q", got, tc.want)
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := model.ComputeAggregateReviewState(testCase.states)
+			if got != testCase.want {
+				t.Errorf("ComputeAggregateReviewState = %q, want %q", got, testCase.want)
 			}
 		})
 	}
@@ -324,97 +324,97 @@ func TestCheckRateLimit(t *testing.T) {
 	})
 
 	t.Run("no_header_returns_nil", func(t *testing.T) {
-		if err := checkRateLimit(instance, makeResp(nil)); err != nil {
+		if err := checkRateLimit(instance, makeResponse(nil)); err != nil {
 			t.Errorf("expected nil, got %v", err)
 		}
 	})
 
 	t.Run("remaining_positive_returns_nil", func(t *testing.T) {
-		resp := makeResp(map[string]string{"X-RateLimit-Remaining": "42"})
-		if err := checkRateLimit(instance, resp); err != nil {
+		response := makeResponse(map[string]string{"X-RateLimit-Remaining": "42"})
+		if err := checkRateLimit(instance, response); err != nil {
 			t.Errorf("expected nil, got %v", err)
 		}
 	})
 
 	t.Run("remaining_zero_returns_error", func(t *testing.T) {
-		resp := makeResp(map[string]string{"X-RateLimit-Remaining": "0"})
-		err := checkRateLimit(instance, resp)
+		response := makeResponse(map[string]string{"X-RateLimit-Remaining": "0"})
+		err := checkRateLimit(instance, response)
 		if err == nil {
 			t.Fatal("expected RateLimitError, got nil")
 		}
-		var rlErr adapter.RateLimitError
-		if !errors.As(err, &rlErr) {
+		var rateLimitErr adapter.RateLimitError
+		if !errors.As(err, &rateLimitErr) {
 			t.Fatalf("expected RateLimitError, got %T", err)
 		}
-		if rlErr.Instance.Host != "github.com" {
-			t.Errorf("Instance.Host = %q, want %q", rlErr.Instance.Host, "github.com")
+		if rateLimitErr.Instance.Host != "github.com" {
+			t.Errorf("Instance.Host = %q, want %q", rateLimitErr.Instance.Host, "github.com")
 		}
 	})
 
 	t.Run("reset_header_sets_retry_after", func(t *testing.T) {
 		resetTime := time.Now().Add(10 * time.Minute).Truncate(time.Second)
-		resp := makeResp(map[string]string{
+		response := makeResponse(map[string]string{
 			"X-RateLimit-Remaining": "0",
 			"X-RateLimit-Reset":     strconv.FormatInt(resetTime.Unix(), 10),
 		})
-		var rlErr adapter.RateLimitError
-		if !errors.As(checkRateLimit(instance, resp), &rlErr) {
+		var rateLimitErr adapter.RateLimitError
+		if !errors.As(checkRateLimit(instance, response), &rateLimitErr) {
 			t.Fatal("expected RateLimitError")
 		}
-		if !rlErr.RetryAfter.Equal(time.Unix(resetTime.Unix(), 0)) {
-			t.Errorf("RetryAfter = %v, want %v", rlErr.RetryAfter, resetTime)
+		if !rateLimitErr.RetryAfter.Equal(time.Unix(resetTime.Unix(), 0)) {
+			t.Errorf("RetryAfter = %v, want %v", rateLimitErr.RetryAfter, resetTime)
 		}
 	})
 
 	t.Run("retry_after_header_used_when_no_reset", func(t *testing.T) {
-		resp := makeResp(map[string]string{
+		response := makeResponse(map[string]string{
 			"X-RateLimit-Remaining": "0",
 			"Retry-After":           "30",
 		})
 		before := time.Now()
-		var rlErr adapter.RateLimitError
-		if !errors.As(checkRateLimit(instance, resp), &rlErr) {
+		var rateLimitErr adapter.RateLimitError
+		if !errors.As(checkRateLimit(instance, response), &rateLimitErr) {
 			t.Fatal("expected RateLimitError")
 		}
-		if !rlErr.RetryAfter.After(before) {
-			t.Errorf("RetryAfter %v should be after call time %v", rlErr.RetryAfter, before)
+		if !rateLimitErr.RetryAfter.After(before) {
+			t.Errorf("RetryAfter %v should be after call time %v", rateLimitErr.RetryAfter, before)
 		}
-		if !rlErr.RetryAfter.Before(before.Add(60 * time.Second)) {
-			t.Errorf("RetryAfter %v is suspiciously far in the future", rlErr.RetryAfter)
+		if !rateLimitErr.RetryAfter.Before(before.Add(60 * time.Second)) {
+			t.Errorf("RetryAfter %v is suspiciously far in the future", rateLimitErr.RetryAfter)
 		}
 	})
 
 	t.Run("reset_takes_priority_over_retry_after", func(t *testing.T) {
 		resetTime := time.Now().Add(5 * time.Minute)
-		resp := makeResp(map[string]string{
+		response := makeResponse(map[string]string{
 			"X-RateLimit-Remaining": "0",
 			"X-RateLimit-Reset":     strconv.FormatInt(resetTime.Unix(), 10),
 			"Retry-After":           "999",
 		})
-		var rlErr adapter.RateLimitError
-		if !errors.As(checkRateLimit(instance, resp), &rlErr) {
+		var rateLimitErr adapter.RateLimitError
+		if !errors.As(checkRateLimit(instance, response), &rateLimitErr) {
 			t.Fatal("expected RateLimitError")
 		}
-		if rlErr.RetryAfter.Equal(time.Unix(resetTime.Unix(), 0)) == false {
-			t.Errorf("RetryAfter = %v; expected X-RateLimit-Reset value %v to take priority", rlErr.RetryAfter, resetTime)
+		if rateLimitErr.RetryAfter.Equal(time.Unix(resetTime.Unix(), 0)) == false {
+			t.Errorf("RetryAfter = %v; expected X-RateLimit-Reset value %v to take priority", rateLimitErr.RetryAfter, resetTime)
 		}
 	})
 
 	t.Run("malformed_remaining_header_returns_nil", func(t *testing.T) {
-		resp := makeResp(map[string]string{"X-RateLimit-Remaining": "notanumber"})
-		if err := checkRateLimit(instance, resp); err != nil {
+		response := makeResponse(map[string]string{"X-RateLimit-Remaining": "notanumber"})
+		if err := checkRateLimit(instance, response); err != nil {
 			t.Errorf("expected nil for malformed header, got %v", err)
 		}
 	})
 
 	t.Run("remaining_zero_no_reset_headers", func(t *testing.T) {
-		resp := makeResp(map[string]string{"X-RateLimit-Remaining": "0"})
-		var rlErr adapter.RateLimitError
-		if !errors.As(checkRateLimit(instance, resp), &rlErr) {
+		response := makeResponse(map[string]string{"X-RateLimit-Remaining": "0"})
+		var rateLimitErr adapter.RateLimitError
+		if !errors.As(checkRateLimit(instance, response), &rateLimitErr) {
 			t.Fatal("expected RateLimitError")
 		}
-		if !rlErr.RetryAfter.IsZero() {
-			t.Errorf("RetryAfter should be zero when no reset headers present, got %v", rlErr.RetryAfter)
+		if !rateLimitErr.RetryAfter.IsZero() {
+			t.Errorf("RetryAfter should be zero when no reset headers present, got %v", rateLimitErr.RetryAfter)
 		}
 	})
 }
@@ -441,12 +441,12 @@ func TestNormalizePRState(t *testing.T) {
 		{"UNKNOWN", false, false, model.PRStateOpen},
 		{"", false, false, model.PRStateOpen},
 	}
-	for _, tc := range cases {
-		name := tc.state + "_draft=" + strconv.FormatBool(tc.isDraft) + "_merged=" + strconv.FormatBool(tc.isMerged)
+	for _, testCase := range cases {
+		name := testCase.state + "_draft=" + strconv.FormatBool(testCase.isDraft) + "_merged=" + strconv.FormatBool(testCase.isMerged)
 		t.Run(name, func(t *testing.T) {
-			got := normalizePRState(tc.state, tc.isDraft, tc.isMerged)
-			if got != tc.want {
-				t.Errorf("normalizePRState(%q, %v, %v) = %q, want %q", tc.state, tc.isDraft, tc.isMerged, got, tc.want)
+			got := normalizePRState(testCase.state, testCase.isDraft, testCase.isMerged)
+			if got != testCase.want {
+				t.Errorf("normalizePRState(%q, %v, %v) = %q, want %q", testCase.state, testCase.isDraft, testCase.isMerged, got, testCase.want)
 			}
 		})
 	}
@@ -469,11 +469,11 @@ func TestNormalizeReviewDecision(t *testing.T) {
 		{"", model.ReviewDecisionPending},
 		{"REVIEW_REQUESTED", model.ReviewDecisionPending},
 	}
-	for _, tc := range cases {
-		t.Run(tc.input, func(t *testing.T) {
-			got := normalizeReviewDecision(tc.input)
-			if got != tc.want {
-				t.Errorf("normalizeReviewDecision(%q) = %q, want %q", tc.input, got, tc.want)
+	for _, testCase := range cases {
+		t.Run(testCase.input, func(t *testing.T) {
+			got := normalizeReviewDecision(testCase.input)
+			if got != testCase.want {
+				t.Errorf("normalizeReviewDecision(%q) = %q, want %q", testCase.input, got, testCase.want)
 			}
 		})
 	}
@@ -495,25 +495,25 @@ func TestNormalizeLabels(t *testing.T) {
 		}
 	})
 	t.Run("color_without_hash_gets_prefix", func(t *testing.T) {
-		got := normalizeLabels([]*gogithub.Label{{Name: ptr("bug"), Color: ptr("0075ca")}})
+		got := normalizeLabels([]*gogithub.Label{{Name: pointerTo("bug"), Color: pointerTo("0075ca")}})
 		if got[0].Color != "#0075ca" {
 			t.Errorf("Color = %q, want %q", got[0].Color, "#0075ca")
 		}
 	})
 	t.Run("color_with_hash_unchanged", func(t *testing.T) {
-		got := normalizeLabels([]*gogithub.Label{{Name: ptr("bug"), Color: ptr("#0075ca")}})
+		got := normalizeLabels([]*gogithub.Label{{Name: pointerTo("bug"), Color: pointerTo("#0075ca")}})
 		if got[0].Color != "#0075ca" {
 			t.Errorf("Color = %q, want %q", got[0].Color, "#0075ca")
 		}
 	})
 	t.Run("empty_color_unchanged", func(t *testing.T) {
-		got := normalizeLabels([]*gogithub.Label{{Name: ptr("bug"), Color: ptr("")}})
+		got := normalizeLabels([]*gogithub.Label{{Name: pointerTo("bug"), Color: pointerTo("")}})
 		if got[0].Color != "" {
 			t.Errorf("Color = %q, want empty", got[0].Color)
 		}
 	})
 	t.Run("multiple_labels_order_preserved", func(t *testing.T) {
-		got := normalizeLabels([]*gogithub.Label{{Name: ptr("a")}, {Name: ptr("b")}})
+		got := normalizeLabels([]*gogithub.Label{{Name: pointerTo("a")}, {Name: pointerTo("b")}})
 		if len(got) != 2 || got[0].Name != "a" || got[1].Name != "b" {
 			t.Errorf("unexpected labels: %v", got)
 		}
@@ -561,34 +561,34 @@ func TestNormalizePR(t *testing.T) {
 	mergedTime := time.Date(2024, 1, 17, 8, 0, 0, 0, time.UTC)
 
 	cases := []struct {
-		name  string
-		pr    *gogithub.PullRequest
-		check func(t *testing.T, got model.PullRequest)
+		name        string
+		pullRequest *gogithub.PullRequest
+		check       func(t *testing.T, got model.PullRequest)
 	}{
 		{
 			name: "fully_populated",
-			pr: &gogithub.PullRequest{
-				NodeID:  ptr("PR_abc123"),
-				Number:  ptr(42),
-				Title:   ptr("Add feature X"),
-				HTMLURL: ptr("https://github.com/acme/repo/pull/42"),
-				Body:    ptr("This PR adds feature X"),
+			pullRequest: &gogithub.PullRequest{
+				NodeID:  pointerTo("PR_abc123"),
+				Number:  pointerTo(42),
+				Title:   pointerTo("Add feature X"),
+				HTMLURL: pointerTo("https://github.com/acme/repo/pull/42"),
+				Body:    pointerTo("This PR adds feature X"),
 				Head: &gogithub.PullRequestBranch{
-					Ref: ptr("feature/x"),
-					SHA: ptr("deadbeef"),
+					Ref: pointerTo("feature/x"),
+					SHA: pointerTo("deadbeef"),
 				},
 				Base: &gogithub.PullRequestBranch{
-					Ref: ptr("main"),
+					Ref: pointerTo("main"),
 				},
 				User: &gogithub.User{
-					Login:     ptr("alice"),
-					AvatarURL: ptr("https://avatars.githubusercontent.com/alice"),
+					Login:     pointerTo("alice"),
+					AvatarURL: pointerTo("https://avatars.githubusercontent.com/alice"),
 				},
 				Labels: []*gogithub.Label{
-					{Name: ptr("bug"), Color: ptr("d73a4a")},
+					{Name: pointerTo("bug"), Color: pointerTo("d73a4a")},
 				},
-				State:     ptr("open"),
-				Draft:     ptr(false),
+				State:     pointerTo("open"),
+				Draft:     pointerTo(false),
 				CreatedAt: &gogithub.Timestamp{Time: baseTime},
 				UpdatedAt: &gogithub.Timestamp{Time: updatedTime},
 			},
@@ -657,9 +657,9 @@ func TestNormalizePR(t *testing.T) {
 		},
 		{
 			name: "draft_pr",
-			pr: &gogithub.PullRequest{
-				State: ptr("open"),
-				Draft: ptr(true),
+			pullRequest: &gogithub.PullRequest{
+				State: pointerTo("open"),
+				Draft: pointerTo(true),
 				Head:  &gogithub.PullRequestBranch{},
 				Base:  &gogithub.PullRequestBranch{},
 				User:  &gogithub.User{},
@@ -672,9 +672,9 @@ func TestNormalizePR(t *testing.T) {
 		},
 		{
 			name: "merged_pr",
-			pr: &gogithub.PullRequest{
-				State:    ptr("closed"),
-				Draft:    ptr(false),
+			pullRequest: &gogithub.PullRequest{
+				State:    pointerTo("closed"),
+				Draft:    pointerTo(false),
 				MergedAt: &gogithub.Timestamp{Time: mergedTime},
 				Head:     &gogithub.PullRequestBranch{},
 				Base:     &gogithub.PullRequestBranch{},
@@ -694,9 +694,9 @@ func TestNormalizePR(t *testing.T) {
 		},
 		{
 			name: "open_pr_no_merged_at",
-			pr: &gogithub.PullRequest{
-				State: ptr("open"),
-				Draft: ptr(false),
+			pullRequest: &gogithub.PullRequest{
+				State: pointerTo("open"),
+				Draft: pointerTo(false),
 				Head:  &gogithub.PullRequestBranch{},
 				Base:  &gogithub.PullRequestBranch{},
 				User:  &gogithub.User{},
@@ -712,24 +712,24 @@ func TestNormalizePR(t *testing.T) {
 		},
 		{
 			name: "with_requested_reviewers",
-			pr: &gogithub.PullRequest{
-				State: ptr("open"),
-				Draft: ptr(false),
+			pullRequest: &gogithub.PullRequest{
+				State: pointerTo("open"),
+				Draft: pointerTo(false),
 				Head:  &gogithub.PullRequestBranch{},
 				Base:  &gogithub.PullRequestBranch{},
 				User:  &gogithub.User{},
 				RequestedReviewers: []*gogithub.User{
-					{Login: ptr("bob"), AvatarURL: ptr("https://avatars.githubusercontent.com/bob")},
-					{Login: ptr("carol"), AvatarURL: ptr("https://avatars.githubusercontent.com/carol")},
+					{Login: pointerTo("bob"), AvatarURL: pointerTo("https://avatars.githubusercontent.com/bob")},
+					{Login: pointerTo("carol"), AvatarURL: pointerTo("https://avatars.githubusercontent.com/carol")},
 				},
 			},
 			check: func(t *testing.T, got model.PullRequest) {
 				if len(got.Reviews.RequestedReviewers) != 2 {
 					t.Fatalf("len(RequestedReviewers) = %d, want 2", len(got.Reviews.RequestedReviewers))
 				}
-				for i, rr := range got.Reviews.RequestedReviewers {
-					if rr.Decision != model.ReviewDecisionPending {
-						t.Errorf("RequestedReviewers[%d].Decision = %q, want Pending", i, rr.Decision)
+				for index, requestedReviewer := range got.Reviews.RequestedReviewers {
+					if requestedReviewer.Decision != model.ReviewDecisionPending {
+						t.Errorf("RequestedReviewers[%d].Decision = %q, want Pending", index, requestedReviewer.Decision)
 					}
 				}
 				if got.Reviews.AggregateState != model.AggregateReviewStateRequired {
@@ -739,9 +739,9 @@ func TestNormalizePR(t *testing.T) {
 		},
 		{
 			name: "no_requested_reviewers",
-			pr: &gogithub.PullRequest{
-				State:              ptr("open"),
-				Draft:              ptr(false),
+			pullRequest: &gogithub.PullRequest{
+				State:              pointerTo("open"),
+				Draft:              pointerTo(false),
 				Head:               &gogithub.PullRequestBranch{},
 				Base:               &gogithub.PullRequestBranch{},
 				User:               &gogithub.User{},
@@ -758,14 +758,14 @@ func TestNormalizePR(t *testing.T) {
 		},
 		{
 			name: "label_color_gets_hash_prefix",
-			pr: &gogithub.PullRequest{
-				State: ptr("open"),
-				Draft: ptr(false),
+			pullRequest: &gogithub.PullRequest{
+				State: pointerTo("open"),
+				Draft: pointerTo(false),
 				Head:  &gogithub.PullRequestBranch{},
 				Base:  &gogithub.PullRequestBranch{},
 				User:  &gogithub.User{},
 				Labels: []*gogithub.Label{
-					{Name: ptr("urgent"), Color: ptr("ff0000")},
+					{Name: pointerTo("urgent"), Color: pointerTo("ff0000")},
 				},
 			},
 			check: func(t *testing.T, got model.PullRequest) {
@@ -779,9 +779,9 @@ func TestNormalizePR(t *testing.T) {
 		},
 		{
 			name: "lazy_fields_are_pending",
-			pr: &gogithub.PullRequest{
-				State: ptr("open"),
-				Draft: ptr(false),
+			pullRequest: &gogithub.PullRequest{
+				State: pointerTo("open"),
+				Draft: pointerTo(false),
 				Head:  &gogithub.PullRequestBranch{},
 				Base:  &gogithub.PullRequestBranch{},
 				User:  &gogithub.User{},
@@ -800,10 +800,10 @@ func TestNormalizePR(t *testing.T) {
 		},
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := normalizePR(tc.pr, "acme", "repo", instance)
-			tc.check(t, got)
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := normalizePR(testCase.pullRequest, "acme", "repo", instance)
+			testCase.check(t, got)
 		})
 	}
 }
@@ -851,21 +851,21 @@ func TestNormalizeReviewSummary(t *testing.T) {
 		{
 			name: "single_reviewer",
 			reviewers: []*gogithub.User{
-				{Login: ptr("bob"), AvatarURL: ptr("https://avatars.githubusercontent.com/bob")},
+				{Login: pointerTo("bob"), AvatarURL: pointerTo("https://avatars.githubusercontent.com/bob")},
 			},
 			check: func(t *testing.T, got model.ReviewSummary) {
 				if len(got.RequestedReviewers) != 1 {
 					t.Fatalf("len(RequestedReviewers) = %d, want 1", len(got.RequestedReviewers))
 				}
-				rr := got.RequestedReviewers[0]
-				if rr.Reviewer.Username != "bob" {
-					t.Errorf("Username = %q, want %q", rr.Reviewer.Username, "bob")
+				requestedReviewer := got.RequestedReviewers[0]
+				if requestedReviewer.Reviewer.Username != "bob" {
+					t.Errorf("Username = %q, want %q", requestedReviewer.Reviewer.Username, "bob")
 				}
-				if rr.Reviewer.AvatarURL != "https://avatars.githubusercontent.com/bob" {
-					t.Errorf("AvatarURL = %q", rr.Reviewer.AvatarURL)
+				if requestedReviewer.Reviewer.AvatarURL != "https://avatars.githubusercontent.com/bob" {
+					t.Errorf("AvatarURL = %q", requestedReviewer.Reviewer.AvatarURL)
 				}
-				if rr.Decision != model.ReviewDecisionPending {
-					t.Errorf("Decision = %q, want Pending", rr.Decision)
+				if requestedReviewer.Decision != model.ReviewDecisionPending {
+					t.Errorf("Decision = %q, want Pending", requestedReviewer.Decision)
 				}
 				if got.AggregateState != model.AggregateReviewStateRequired {
 					t.Errorf("AggregateState = %q, want Required", got.AggregateState)
@@ -878,7 +878,7 @@ func TestNormalizeReviewSummary(t *testing.T) {
 		{
 			name: "reviewer_empty_login_skipped",
 			reviewers: []*gogithub.User{
-				{Login: ptr(""), AvatarURL: ptr("https://avatars.githubusercontent.com/ghost")},
+				{Login: pointerTo(""), AvatarURL: pointerTo("https://avatars.githubusercontent.com/ghost")},
 			},
 			check: func(t *testing.T, got model.ReviewSummary) {
 				if got.RequestedReviewers != nil {
@@ -889,9 +889,9 @@ func TestNormalizeReviewSummary(t *testing.T) {
 		{
 			name: "multiple_reviewers",
 			reviewers: []*gogithub.User{
-				{Login: ptr("alice")},
-				{Login: ptr("bob")},
-				{Login: ptr("carol")},
+				{Login: pointerTo("alice")},
+				{Login: pointerTo("bob")},
+				{Login: pointerTo("carol")},
 			},
 			check: func(t *testing.T, got model.ReviewSummary) {
 				if len(got.RequestedReviewers) != 3 {
@@ -905,24 +905,24 @@ func TestNormalizeReviewSummary(t *testing.T) {
 		{
 			name: "display_name_falls_back_to_login",
 			reviewers: []*gogithub.User{
-				{Login: ptr("dave")},
+				{Login: pointerTo("dave")},
 			},
 			check: func(t *testing.T, got model.ReviewSummary) {
 				if len(got.RequestedReviewers) != 1 {
 					t.Fatalf("len(RequestedReviewers) = %d, want 1", len(got.RequestedReviewers))
 				}
-				rr := got.RequestedReviewers[0]
-				if rr.Reviewer.DisplayName != "dave" {
-					t.Errorf("DisplayName = %q, want %q (should fall back to login)", rr.Reviewer.DisplayName, "dave")
+				requestedReviewer := got.RequestedReviewers[0]
+				if requestedReviewer.Reviewer.DisplayName != "dave" {
+					t.Errorf("DisplayName = %q, want %q (should fall back to login)", requestedReviewer.Reviewer.DisplayName, "dave")
 				}
 			},
 		},
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := normalizeReviewSummary(tc.reviewers)
-			tc.check(t, got)
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := normalizeReviewSummary(testCase.reviewers)
+			testCase.check(t, got)
 		})
 	}
 }

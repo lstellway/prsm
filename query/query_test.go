@@ -14,18 +14,18 @@ func passAll() query.Predicate[model.PullRequest] {
 
 func TestApply_Counts(t *testing.T) {
 	now := time.Now()
-	prs := []model.PullRequest{
+	pullRequests := []model.PullRequest{
 		{Title: "draft PR", State: model.PRStateDraft, UpdatedAt: now},
 		{Title: "open PR A", State: model.PRStateOpen, UpdatedAt: now.Add(-24 * time.Hour)},
 		{Title: "open PR B", State: model.PRStateOpen, UpdatedAt: now.Add(-48 * time.Hour)},
 	}
 
-	pred, err := query.PRFilterSpec{Draft: boolPtr(false)}.Compile(nil)
+	predicate, err := query.PRFilterSpec{Draft: boolPointer(false)}.Compile(nil)
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
 
-	result := query.Apply(prs, pred, query.SortSpec{}, query.GroupSpec{}, "")
+	result := query.Apply(pullRequests, predicate, query.SortSpec{}, query.GroupSpec{}, "")
 
 	if result.Total != 3 {
 		t.Errorf("Total = %d, want 3", result.Total)
@@ -40,12 +40,12 @@ func TestApply_Counts(t *testing.T) {
 
 func TestApply_SortApplied(t *testing.T) {
 	now := time.Now()
-	prs := []model.PullRequest{
+	pullRequests := []model.PullRequest{
 		{Title: "old", UpdatedAt: now.Add(-72 * time.Hour)},
 		{Title: "new", UpdatedAt: now.Add(-24 * time.Hour)},
 	}
 
-	result := query.Apply(prs, passAll(),
+	result := query.Apply(pullRequests, passAll(),
 		query.SortSpec{By: query.SortUpdated, Direction: query.SortDesc},
 		query.GroupSpec{},
 		"",
@@ -59,7 +59,7 @@ func TestApply_SortApplied(t *testing.T) {
 
 func TestApply_FuzzyNarrowsAndReranks(t *testing.T) {
 	now := time.Now()
-	prs := []model.PullRequest{
+	pullRequests := []model.PullRequest{
 		// Sort by updated desc would rank handle-auth first (more recent).
 		// Fuzzy on "auth" should re-rank: "auth service fix" scores higher (prefix).
 		{Title: "handle auth somewhere in code", UpdatedAt: now.Add(-1 * time.Hour)},
@@ -67,7 +67,7 @@ func TestApply_FuzzyNarrowsAndReranks(t *testing.T) {
 		{Title: "update readme", UpdatedAt: now},
 	}
 
-	result := query.Apply(prs, passAll(),
+	result := query.Apply(pullRequests, passAll(),
 		query.SortSpec{By: query.SortUpdated, Direction: query.SortDesc},
 		query.GroupSpec{},
 		"auth",
@@ -93,13 +93,13 @@ func TestApply_FuzzyNarrowsAndReranks(t *testing.T) {
 }
 
 func TestApply_GroupApplied(t *testing.T) {
-	prs := []model.PullRequest{
+	pullRequests := []model.PullRequest{
 		{Title: "PR1", Repo: model.Repository{Owner: "acme", Name: "api"}},
 		{Title: "PR2", Repo: model.Repository{Owner: "acme", Name: "frontend"}},
 		{Title: "PR3", Repo: model.Repository{Owner: "acme", Name: "api"}},
 	}
 
-	result := query.Apply(prs, passAll(), query.SortSpec{}, query.GroupSpec{By: query.GroupRepo}, "")
+	result := query.Apply(pullRequests, passAll(), query.SortSpec{}, query.GroupSpec{By: query.GroupRepo}, "")
 
 	if len(result.Groups) != 2 {
 		t.Fatalf("expected 2 groups, got %d", len(result.Groups))
@@ -110,9 +110,9 @@ func TestApply_GroupApplied(t *testing.T) {
 }
 
 func TestApply_NilFilter(t *testing.T) {
-	prs := []model.PullRequest{{Title: "A"}, {Title: "B"}}
+	pullRequests := []model.PullRequest{{Title: "A"}, {Title: "B"}}
 
-	result := query.Apply(prs, nil, query.SortSpec{}, query.GroupSpec{}, "")
+	result := query.Apply(pullRequests, nil, query.SortSpec{}, query.GroupSpec{}, "")
 
 	if result.Total != 2 || result.Filtered != 2 {
 		t.Errorf("nil filter should pass all; Total=%d Filtered=%d", result.Total, result.Filtered)

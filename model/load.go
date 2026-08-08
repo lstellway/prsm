@@ -23,37 +23,41 @@ type LoadResult[T any] struct {
 func Pending[T any]() LoadResult[T] { return LoadResult[T]{state: LoadStatePending} }
 
 // Loaded returns a LoadResult with a successfully fetched value.
-func Loaded[T any](v T) LoadResult[T] { return LoadResult[T]{state: LoadStateLoaded, value: v} }
+func Loaded[T any](value T) LoadResult[T] { return LoadResult[T]{state: LoadStateLoaded, value: value} }
 
 // Absent returns a LoadResult indicating the provider does not expose this field.
 func Absent[T any]() LoadResult[T] { return LoadResult[T]{state: LoadStateAbsent} }
 
 // Failed returns a LoadResult indicating a fetch was attempted but failed.
-func Failed[T any](cause error) LoadResult[T] { return LoadResult[T]{state: LoadStateError, err: cause} }
-
-func (r LoadResult[T]) IsPending() bool { return r.state == LoadStatePending }
-func (r LoadResult[T]) IsLoaded() bool  { return r.state == LoadStateLoaded }
-func (r LoadResult[T]) IsAbsent() bool  { return r.state == LoadStateAbsent }
-func (r LoadResult[T]) IsError() bool   { return r.state == LoadStateError }
-
-// Err returns the error cause if the result is in the Failed state, otherwise nil.
-func (r LoadResult[T]) Err() error { return r.err }
-
-// Get returns the value and true if loaded, otherwise the zero value and false.
-func (r LoadResult[T]) Get() (T, bool) { return r.value, r.state == LoadStateLoaded }
-
-// MustGet returns the value or panics if not in the Loaded state.
-func (r LoadResult[T]) MustGet() T {
-	if r.state != LoadStateLoaded {
-		panic("LoadResult.MustGet called on non-Loaded result")
-	}
-	return r.value
+func Failed[T any](cause error) LoadResult[T] {
+	return LoadResult[T]{state: LoadStateError, err: cause}
 }
 
-// UnwrapOr returns the value if loaded, otherwise def.
-func (r LoadResult[T]) UnwrapOr(def T) T {
-	if r.state == LoadStateLoaded {
-		return r.value
+func (loadResult LoadResult[T]) IsPending() bool { return loadResult.state == LoadStatePending }
+func (loadResult LoadResult[T]) IsLoaded() bool  { return loadResult.state == LoadStateLoaded }
+func (loadResult LoadResult[T]) IsAbsent() bool  { return loadResult.state == LoadStateAbsent }
+func (loadResult LoadResult[T]) IsError() bool   { return loadResult.state == LoadStateError }
+
+// Err returns the error cause if the result is in the Failed state, otherwise nil.
+func (loadResult LoadResult[T]) Err() error { return loadResult.err }
+
+// Get returns the value and true if loaded, otherwise the zero value and false.
+func (loadResult LoadResult[T]) Get() (T, bool) {
+	return loadResult.value, loadResult.state == LoadStateLoaded
+}
+
+// MustGet returns the value or panics if not in the Loaded state.
+func (loadResult LoadResult[T]) MustGet() T {
+	if loadResult.state != LoadStateLoaded {
+		panic("LoadResult.MustGet called on non-Loaded result")
 	}
-	return def
+	return loadResult.value
+}
+
+// UnwrapOr returns the value if loaded, otherwise fallback.
+func (loadResult LoadResult[T]) UnwrapOr(fallback T) T {
+	if loadResult.state == LoadStateLoaded {
+		return loadResult.value
+	}
+	return fallback
 }

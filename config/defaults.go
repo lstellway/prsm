@@ -72,11 +72,11 @@ refresh_interval_seconds = 60
 func DefaultConfigPath() string {
 	configHome := os.Getenv("XDG_CONFIG_HOME")
 	if configHome == "" {
-		home, err := os.UserHomeDir()
+		homeDirectory, err := os.UserHomeDir()
 		if err != nil {
 			return ""
 		}
-		configHome = filepath.Join(home, ".config")
+		configHome = filepath.Join(homeDirectory, ".config")
 	}
 	return filepath.Join(configHome, "prsm", "config.toml")
 }
@@ -89,18 +89,18 @@ func CreateDefault(path string) error {
 		path = DefaultConfigPath()
 	}
 
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("config: create directory %s: %w", dir, err)
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		return fmt.Errorf("config: create directory %s: %w", directory, err)
 	}
 
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return fmt.Errorf("config: create %s: %w", path, err)
 	}
-	defer f.Close()
+	defer file.Close()
 
-	if _, err := f.WriteString(defaultConfigContent); err != nil {
+	if _, err := file.WriteString(defaultConfigContent); err != nil {
 		return fmt.Errorf("config: write %s: %w", path, err)
 	}
 	return nil

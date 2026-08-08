@@ -32,89 +32,89 @@ type PRFilterSpec struct {
 
 // Compile builds a Predicate[model.PullRequest] from the spec.
 // resolvedMe maps provider kind to the authenticated user's identity, used to resolve "me" sentinels.
-func (s PRFilterSpec) Compile(resolvedMe map[model.ProviderKind]model.Author) (Predicate[model.PullRequest], error) {
-	pred := Predicate[model.PullRequest](func(model.PullRequest) bool { return true })
+func (filterSpec PRFilterSpec) Compile(resolvedMe map[model.ProviderKind]model.Author) (Predicate[model.PullRequest], error) {
+	predicate := Predicate[model.PullRequest](func(model.PullRequest) bool { return true })
 
-	if s.Author != "" {
-		pred = pred.And(authorPred(s.Author, resolvedMe))
+	if filterSpec.Author != "" {
+		predicate = predicate.And(authorPred(filterSpec.Author, resolvedMe))
 	}
-	if len(s.Repo) > 0 {
-		pred = pred.And(repoPred(s.Repo))
+	if len(filterSpec.Repo) > 0 {
+		predicate = predicate.And(repoPred(filterSpec.Repo))
 	}
-	if len(s.Provider) > 0 {
-		pred = pred.And(providerPred(s.Provider))
+	if len(filterSpec.Provider) > 0 {
+		predicate = predicate.And(providerPred(filterSpec.Provider))
 	}
-	if s.Reviewer != "" {
-		pred = pred.And(reviewerPred(s.Reviewer, resolvedMe))
+	if filterSpec.Reviewer != "" {
+		predicate = predicate.And(reviewerPred(filterSpec.Reviewer, resolvedMe))
 	}
-	if s.ReviewStatus != "" {
-		aggState, err := parseAggregateReviewState(s.ReviewStatus)
+	if filterSpec.ReviewStatus != "" {
+		aggregateState, err := parseAggregateReviewState(filterSpec.ReviewStatus)
 		if err != nil {
 			return nil, err
 		}
-		pred = pred.And(reviewStatusPred(aggState))
+		predicate = predicate.And(reviewStatusPred(aggregateState))
 	}
-	if s.State != "" {
-		state, err := parsePRState(s.State)
+	if filterSpec.State != "" {
+		state, err := parsePRState(filterSpec.State)
 		if err != nil {
 			return nil, err
 		}
-		pred = pred.And(statePred(state))
+		predicate = predicate.And(statePred(state))
 	}
-	if s.Draft != nil {
-		pred = pred.And(draftPred(*s.Draft))
+	if filterSpec.Draft != nil {
+		predicate = predicate.And(draftPred(*filterSpec.Draft))
 	}
-	if len(s.Label) > 0 {
-		pred = pred.And(labelPred(s.Label))
+	if len(filterSpec.Label) > 0 {
+		predicate = predicate.And(labelPred(filterSpec.Label))
 	}
-	if s.StalenessGTE > 0 {
-		pred = pred.And(stalenessPred(s.StalenessGTE))
+	if filterSpec.StalenessGTE > 0 {
+		predicate = predicate.And(stalenessPred(filterSpec.StalenessGTE))
 	}
-	if s.TargetBranch != "" {
-		pred = pred.And(targetBranchPred(s.TargetBranch))
+	if filterSpec.TargetBranch != "" {
+		predicate = predicate.And(targetBranchPred(filterSpec.TargetBranch))
 	}
-	if s.CIStatus != "" {
-		ciState, err := parseCIState(s.CIStatus)
+	if filterSpec.CIStatus != "" {
+		ciState, err := parseCIState(filterSpec.CIStatus)
 		if err != nil {
 			return nil, err
 		}
-		pred = pred.And(ciStatusPred(ciState))
+		predicate = predicate.And(ciStatusPred(ciState))
 	}
 
-	return pred, nil
+	return predicate, nil
 }
 
 // resolveMe returns the username to compare against for a "me" sentinel.
 // Returns ("", false) when "me" cannot be resolved for the PR's provider kind —
 // callers must treat an unresolved "me" as a non-match rather than comparing against "".
-func resolveMe(raw string, pr model.PullRequest, resolvedMe map[model.ProviderKind]model.Author) (string, bool) {
+func resolveMe(raw string, pullRequest model.PullRequest, resolvedMe map[model.ProviderKind]model.Author) (string, bool) {
 	if raw != "me" {
 		return raw, true
 	}
-	if identity, ok := resolvedMe[pr.Provider.Kind]; ok {
+	if identity, ok := resolvedMe[pullRequest.Provider.Kind]; ok {
 		return identity.Username, true
 	}
 	return "", false
 }
 
 func authorPred(author string, resolvedMe map[model.ProviderKind]model.Author) Predicate[model.PullRequest] {
-	return func(pr model.PullRequest) bool {
-		target, ok := resolveMe(author, pr, resolvedMe)
+	return func(pullRequest model.PullRequest) bool {
+		target, ok := resolveMe(author, pullRequest, resolvedMe)
 		if !ok {
 			return false
 		}
-		return strings.EqualFold(pr.Author.Username, target)
+		return strings.EqualFold(pullRequest.Author.Username, target)
 	}
 }
 
 func reviewerPred(reviewer string, resolvedMe map[model.ProviderKind]model.Author) Predicate[model.PullRequest] {
-	return func(pr model.PullRequest) bool {
-		target, ok := resolveMe(reviewer, pr, resolvedMe)
+	return func(pullRequest model.PullRequest) bool {
+		target, ok := resolveMe(reviewer, pullRequest, resolvedMe)
 		if !ok {
 			return false
 		}
-		for _, rs := range pr.Reviews.RequestedReviewers {
-			if strings.EqualFold(rs.Reviewer.Username, target) {
+		for _, reviewerState := range pullRequest.Reviews.RequestedReviewers {
+			if strings.EqualFold(reviewerState.Reviewer.Username, target) {
 				return true
 			}
 		}
@@ -123,14 +123,14 @@ func reviewerPred(reviewer string, resolvedMe map[model.ProviderKind]model.Autho
 }
 
 func reviewStatusPred(status model.AggregateReviewState) Predicate[model.PullRequest] {
-	return func(pr model.PullRequest) bool {
-		return pr.Reviews.AggregateState == status
+	return func(pullRequest model.PullRequest) bool {
+		return pullRequest.Reviews.AggregateState == status
 	}
 }
 
 func statePred(state model.PRState) Predicate[model.PullRequest] {
-	return func(pr model.PullRequest) bool {
-		return pr.State == state
+	return func(pullRequest model.PullRequest) bool {
+		return pullRequest.State == state
 	}
 }
 
@@ -138,19 +138,19 @@ func statePred(state model.PRState) Predicate[model.PullRequest] {
 // Checks both State == PRStateDraft (providers that encode draft as state) and
 // the Draft bool (providers that expose it as a separate field alongside PRStateOpen).
 func draftPred(draft bool) Predicate[model.PullRequest] {
-	return func(pr model.PullRequest) bool {
-		isDraft := pr.State == model.PRStateDraft || pr.Draft
+	return func(pullRequest model.PullRequest) bool {
+		isDraft := pullRequest.State == model.PRStateDraft || pullRequest.Draft
 		return isDraft == draft
 	}
 }
 
 // labelPred implements AND-match: the PR must carry every listed label.
 func labelPred(labels []string) Predicate[model.PullRequest] {
-	return func(pr model.PullRequest) bool {
+	return func(pullRequest model.PullRequest) bool {
 		for _, required := range labels {
 			found := false
-			for _, l := range pr.Labels {
-				if strings.EqualFold(l.Name, required) {
+			for _, label := range pullRequest.Labels {
+				if strings.EqualFold(label.Name, required) {
 					found = true
 					break
 				}
@@ -165,10 +165,10 @@ func labelPred(labels []string) Predicate[model.PullRequest] {
 
 // repoPred implements OR-match: the PR must be in at least one of the listed repos.
 func repoPred(repos []string) Predicate[model.PullRequest] {
-	return func(pr model.PullRequest) bool {
-		full := pr.Repo.Owner + "/" + pr.Repo.Name
-		for _, r := range repos {
-			if strings.EqualFold(full, r) {
+	return func(pullRequest model.PullRequest) bool {
+		fullName := pullRequest.Repo.Owner + "/" + pullRequest.Repo.Name
+		for _, repo := range repos {
+			if strings.EqualFold(fullName, repo) {
 				return true
 			}
 		}
@@ -180,9 +180,9 @@ func repoPred(repos []string) Predicate[model.PullRequest] {
 // Matches against Provider.Name (the user-assigned config alias, e.g. "github-personal"),
 // consistent with FilterConfig.Provider in config/.
 func providerPred(providers []string) Predicate[model.PullRequest] {
-	return func(pr model.PullRequest) bool {
-		for _, p := range providers {
-			if strings.EqualFold(pr.Provider.Name, p) {
+	return func(pullRequest model.PullRequest) bool {
+		for _, providerName := range providers {
+			if strings.EqualFold(pullRequest.Provider.Name, providerName) {
 				return true
 			}
 		}
@@ -191,16 +191,16 @@ func providerPred(providers []string) Predicate[model.PullRequest] {
 }
 
 func stalenessPred(days int) Predicate[model.PullRequest] {
-	return func(pr model.PullRequest) bool {
-		staleness := time.Since(pr.UpdatedAt)
+	return func(pullRequest model.PullRequest) bool {
+		staleness := time.Since(pullRequest.UpdatedAt)
 		return int(staleness.Hours()/24) >= days
 	}
 }
 
 func targetBranchPred(branch string) Predicate[model.PullRequest] {
-	lower := strings.ToLower(branch)
-	return func(pr model.PullRequest) bool {
-		return strings.Contains(strings.ToLower(pr.TargetBranch), lower)
+	lowerBranch := strings.ToLower(branch)
+	return func(pullRequest model.PullRequest) bool {
+		return strings.Contains(strings.ToLower(pullRequest.TargetBranch), lowerBranch)
 	}
 }
 
@@ -208,20 +208,20 @@ func targetBranchPred(branch string) Predicate[model.PullRequest] {
 // remaining visible until their CI data loads. LoadStateAbsent and LoadStateError
 // are treated as CIStateNone for filter evaluation.
 func ciStatusPred(status model.CIState) Predicate[model.PullRequest] {
-	return func(pr model.PullRequest) bool {
-		if pr.CI.IsPending() {
+	return func(pullRequest model.PullRequest) bool {
+		if pullRequest.CI.IsPending() {
 			return true
 		}
-		actual := model.CIStateNone
-		if ci, ok := pr.CI.Get(); ok {
-			actual = ci.State
+		actualState := model.CIStateNone
+		if ciStatus, ok := pullRequest.CI.Get(); ok {
+			actualState = ciStatus.State
 		}
-		return actual == status
+		return actualState == status
 	}
 }
 
-func parseAggregateReviewState(s string) (model.AggregateReviewState, error) {
-	switch s {
+func parseAggregateReviewState(status string) (model.AggregateReviewState, error) {
+	switch status {
 	case "none":
 		return model.AggregateReviewStateNone, nil
 	case "review_required":
@@ -233,12 +233,12 @@ func parseAggregateReviewState(s string) (model.AggregateReviewState, error) {
 	case "commented":
 		return model.AggregateReviewStateCommented, nil
 	default:
-		return "", fmt.Errorf("invalid review_status %q: must be one of approved, changes_requested, review_required, commented, none", s)
+		return "", fmt.Errorf("invalid review_status %q: must be one of approved, changes_requested, review_required, commented, none", status)
 	}
 }
 
-func parsePRState(s string) (model.PRState, error) {
-	switch s {
+func parsePRState(state string) (model.PRState, error) {
+	switch state {
 	case "open":
 		return model.PRStateOpen, nil
 	case "closed":
@@ -248,12 +248,12 @@ func parsePRState(s string) (model.PRState, error) {
 	case "draft":
 		return model.PRStateDraft, nil
 	default:
-		return "", fmt.Errorf("invalid state %q: must be one of open, closed, merged, draft", s)
+		return "", fmt.Errorf("invalid state %q: must be one of open, closed, merged, draft", state)
 	}
 }
 
-func parseCIState(s string) (model.CIState, error) {
-	switch s {
+func parseCIState(status string) (model.CIState, error) {
+	switch status {
 	case "passing":
 		return model.CIStatePassing, nil
 	case "failing":
@@ -263,6 +263,6 @@ func parseCIState(s string) (model.CIState, error) {
 	case "none":
 		return model.CIStateNone, nil
 	default:
-		return "", fmt.Errorf("invalid ci_status %q: must be one of passing, failing, pending, none", s)
+		return "", fmt.Errorf("invalid ci_status %q: must be one of passing, failing, pending, none", status)
 	}
 }

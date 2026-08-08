@@ -19,44 +19,44 @@ import (
 
 func TestNew(t *testing.T) {
 	cases := []struct {
-		name     string
-		cfg      Config
-		wantErr  bool
-		wantHost string
-		wantKind model.ProviderKind
+		name          string
+		adapterConfig Config
+		wantErr       bool
+		wantHost      string
+		wantKind      model.ProviderKind
 	}{
 		{
-			name:    "empty_token",
-			cfg:     Config{Name: "test", Token: ""},
-			wantErr: true,
+			name:          "empty_token",
+			adapterConfig: Config{Name: "test", Token: ""},
+			wantErr:       true,
 		},
 		{
-			name:     "valid_github_com",
-			cfg:      Config{Name: "test", Token: "ghp_test_token"},
-			wantErr:  false,
-			wantHost: "github.com",
-			wantKind: model.ProviderGitHub,
+			name:          "valid_github_com",
+			adapterConfig: Config{Name: "test", Token: "ghp_test_token"},
+			wantErr:       false,
+			wantHost:      "github.com",
+			wantKind:      model.ProviderGitHub,
 		},
 		{
-			name:     "enterprise_url",
-			cfg:      Config{Name: "test", Token: "ghp_test_token", BaseURL: "https://ghe.example.com/api/v3"},
-			wantErr:  false,
-			wantHost: "ghe.example.com",
-			wantKind: model.ProviderGitHub,
+			name:          "enterprise_url",
+			adapterConfig: Config{Name: "test", Token: "ghp_test_token", BaseURL: "https://ghe.example.com/api/v3"},
+			wantErr:       false,
+			wantHost:      "ghe.example.com",
+			wantKind:      model.ProviderGitHub,
 		},
 		{
-			name:     "enterprise_url_with_port",
-			cfg:      Config{Name: "test", Token: "ghp_test_token", BaseURL: "https://ghe.example.com:8443"},
-			wantErr:  false,
-			wantHost: "ghe.example.com",
-			wantKind: model.ProviderGitHub,
+			name:          "enterprise_url_with_port",
+			adapterConfig: Config{Name: "test", Token: "ghp_test_token", BaseURL: "https://ghe.example.com:8443"},
+			wantErr:       false,
+			wantHost:      "ghe.example.com",
+			wantKind:      model.ProviderGitHub,
 		},
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			a, err := New(tc.cfg)
-			if tc.wantErr {
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			githubAdapter, err := New(testCase.adapterConfig)
+			if testCase.wantErr {
 				if err == nil {
 					t.Fatal("expected error, got nil")
 				}
@@ -65,15 +65,15 @@ func TestNew(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if a == nil {
+			if githubAdapter == nil {
 				t.Fatal("expected non-nil adapter")
 			}
-			inst := a.Instance()
-			if inst.Host != tc.wantHost {
-				t.Errorf("Instance().Host = %q, want %q", inst.Host, tc.wantHost)
+			instance := githubAdapter.Instance()
+			if instance.Host != testCase.wantHost {
+				t.Errorf("Instance().Host = %q, want %q", instance.Host, testCase.wantHost)
 			}
-			if inst.Kind != tc.wantKind {
-				t.Errorf("Instance().Kind = %q, want %q", inst.Kind, tc.wantKind)
+			if instance.Kind != testCase.wantKind {
+				t.Errorf("Instance().Kind = %q, want %q", instance.Kind, testCase.wantKind)
 			}
 		})
 	}
@@ -121,11 +121,11 @@ func TestExtractHost(t *testing.T) {
 		},
 	}
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			got := extractHost(tc.input)
-			if got != tc.want {
-				t.Errorf("extractHost(%q) = %q, want %q", tc.input, got, tc.want)
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := extractHost(testCase.input)
+			if got != testCase.want {
+				t.Errorf("extractHost(%q) = %q, want %q", testCase.input, got, testCase.want)
 			}
 		})
 	}
@@ -158,18 +158,18 @@ type minimalGHPR struct {
 }
 
 func makePR(id int) minimalGHPR {
-	pr := minimalGHPR{
+	pullRequest := minimalGHPR{
 		NodeID: fmt.Sprintf("pr%d", id),
 		Number: id,
 		Title:  fmt.Sprintf("PR %d", id),
 		State:  "open",
 	}
-	pr.Head.SHA = fmt.Sprintf("sha%d", id)
-	pr.Head.Ref = "feat"
-	pr.Head.Repo.FullName = "owner/repo"
-	pr.Base.Ref = "main"
-	pr.User.Login = "alice"
-	return pr
+	pullRequest.Head.SHA = fmt.Sprintf("sha%d", id)
+	pullRequest.Head.Ref = "feat"
+	pullRequest.Head.Repo.FullName = "owner/repo"
+	pullRequest.Base.Ref = "main"
+	pullRequest.User.Login = "alice"
+	return pullRequest
 }
 
 // newTestClient returns a *gogithub.Client pointed at the given test server URL.
@@ -187,28 +187,29 @@ func TestListRepoPRsPagination(t *testing.T) {
 	t.Run("multi_page_concatenation", func(t *testing.T) {
 		// Page 1: PRs 1–2 with a Link header pointing to page 2.
 		// Page 2: PRs 3–4 with no Link header (last page).
-		page1PRs := []minimalGHPR{makePR(1), makePR(2)}
-		page2PRs := []minimalGHPR{makePR(3), makePR(4)}
+		page1PullRequests := []minimalGHPR{makePR(1), makePR(2)}
+		page2PullRequests := []minimalGHPR{makePR(3), makePR(4)}
 
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			page := r.URL.Query().Get("page")
-			if page == "" || page == "1" {
-				nextURL := fmt.Sprintf("<%s?page=2>; rel=\"next\"", r.URL.Path)
-				w.Header().Set("Link", nextURL)
-				w.Header().Set("Content-Type", "application/json")
-				if err := json.NewEncoder(w).Encode(page1PRs); err != nil {
-					t.Errorf("encode page1: %v", err)
+		server := httptest.NewServer(http.HandlerFunc(
+			func(responseWriter http.ResponseWriter, request *http.Request) {
+				page := request.URL.Query().Get("page")
+				if page == "" || page == "1" {
+					nextURL := fmt.Sprintf("<%s?page=2>; rel=\"next\"", request.URL.Path)
+					responseWriter.Header().Set("Link", nextURL)
+					responseWriter.Header().Set("Content-Type", "application/json")
+					if err := json.NewEncoder(responseWriter).Encode(page1PullRequests); err != nil {
+						t.Errorf("encode page1: %v", err)
+					}
+				} else {
+					responseWriter.Header().Set("Content-Type", "application/json")
+					if err := json.NewEncoder(responseWriter).Encode(page2PullRequests); err != nil {
+						t.Errorf("encode page2: %v", err)
+					}
 				}
-			} else {
-				w.Header().Set("Content-Type", "application/json")
-				if err := json.NewEncoder(w).Encode(page2PRs); err != nil {
-					t.Errorf("encode page2: %v", err)
-				}
-			}
-		}))
-		defer ts.Close()
+			}))
+		defer server.Close()
 
-		restClient, err := newTestClient(ts.URL)
+		restClient, err := newTestClient(server.URL)
 		if err != nil {
 			t.Fatalf("newTestClient: %v", err)
 		}
@@ -224,35 +225,36 @@ func TestListRepoPRsPagination(t *testing.T) {
 			rest:  restClient,
 		}
 
-		prs, err := githubAdapter.listRepoPullRequests(context.Background(), "owner", "repo")
+		pullRequests, err := githubAdapter.listRepoPullRequests(context.Background(), "owner", "repo")
 		if err != nil {
 			t.Fatalf("listRepoPullRequests: %v", err)
 		}
-		if len(prs) != 4 {
-			t.Errorf("got %d PRs, want 4", len(prs))
+		if len(pullRequests) != 4 {
+			t.Errorf("got %d PRs, want 4", len(pullRequests))
 		}
 	})
 
 	t.Run("page_cap_returns_error", func(t *testing.T) {
 		// Always respond with a non-empty page and a next-page link so the
 		// adapter never naturally terminates — it must hit the maxPages cap.
-		pr := makePR(1)
-		body, _ := json.Marshal([]minimalGHPR{pr})
+		pullRequest := makePR(1)
+		body, _ := json.Marshal([]minimalGHPR{pullRequest})
 
-		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			page := r.URL.Query().Get("page")
-			if page == "" {
-				page = "1"
-			}
-			// Always advertise the next page to prevent natural termination.
-			nextURL := fmt.Sprintf("<%s?page=%s>; rel=\"next\"", r.URL.Path, page)
-			w.Header().Set("Link", nextURL)
-			w.Header().Set("Content-Type", "application/json")
-			w.Write(body) //nolint:errcheck
-		}))
-		defer ts.Close()
+		server := httptest.NewServer(http.HandlerFunc(
+			func(responseWriter http.ResponseWriter, request *http.Request) {
+				page := request.URL.Query().Get("page")
+				if page == "" {
+					page = "1"
+				}
+				// Always advertise the next page to prevent natural termination.
+				nextURL := fmt.Sprintf("<%s?page=%s>; rel=\"next\"", request.URL.Path, page)
+				responseWriter.Header().Set("Link", nextURL)
+				responseWriter.Header().Set("Content-Type", "application/json")
+				responseWriter.Write(body) //nolint:errcheck
+			}))
+		defer server.Close()
 
-		restClient, err := newTestClient(ts.URL)
+		restClient, err := newTestClient(server.URL)
 		if err != nil {
 			t.Fatalf("newTestClient: %v", err)
 		}

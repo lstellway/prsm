@@ -39,19 +39,19 @@ type prKey struct {
 	repo         model.Repository
 }
 
-func prKeys(prs []model.PullRequest) []prKey {
-	keys := make([]prKey, len(prs))
-	for i, pr := range prs {
-		keys[i] = prKey{
-			providerID:   pr.ProviderID,
-			number:       pr.Number,
-			title:        pr.Title,
-			headSHA:      pr.HeadSHA,
-			sourceBranch: pr.SourceBranch,
-			targetBranch: pr.TargetBranch,
-			author:       pr.Author.Username,
-			state:        pr.State,
-			repo:         pr.Repo,
+func prKeys(pullRequests []model.PullRequest) []prKey {
+	keys := make([]prKey, len(pullRequests))
+	for index, pullRequest := range pullRequests {
+		keys[index] = prKey{
+			providerID:   pullRequest.ProviderID,
+			number:       pullRequest.Number,
+			title:        pullRequest.Title,
+			headSHA:      pullRequest.HeadSHA,
+			sourceBranch: pullRequest.SourceBranch,
+			targetBranch: pullRequest.TargetBranch,
+			author:       pullRequest.Author.Username,
+			state:        pullRequest.State,
+			repo:         pullRequest.Repo,
 		}
 	}
 	return keys
@@ -75,41 +75,42 @@ func TestListPullRequestsETagRevalidation(t *testing.T) {
 		t.Fatalf("marshal PR list: %v", err)
 	}
 
-	var mu sync.Mutex
+	var mutex sync.Mutex
 	var seen []recordedRequest
 
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		status := http.StatusOK
-		if len(seen) > 0 {
-			status = http.StatusNotModified
-		}
-		seen = append(seen, recordedRequest{
-			ifNoneMatch: r.Header.Get("If-None-Match"),
-			status:      status,
-		})
-		mu.Unlock()
+	server := httptest.NewServer(http.HandlerFunc(
+		func(responseWriter http.ResponseWriter, request *http.Request) {
+			mutex.Lock()
+			status := http.StatusOK
+			if len(seen) > 0 {
+				status = http.StatusNotModified
+			}
+			seen = append(seen, recordedRequest{
+				ifNoneMatch: request.Header.Get("If-None-Match"),
+				status:      status,
+			})
+			mutex.Unlock()
 
-		w.Header().Set("ETag", etag)
-		// max-age=0 + must-revalidate forces the cache to revalidate against the
-		// origin on the second call instead of serving the stored body with no
-		// network request at all. GitHub's own max-age=60 would make the second
-		// call a pure cache hit — a different path from the one under test.
-		w.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
+			responseWriter.Header().Set("ETag", etag)
+			// max-age=0 + must-revalidate forces the cache to revalidate against the
+			// origin on the second call instead of serving the stored body with no
+			// network request at all. GitHub's own max-age=60 would make the second
+			// call a pure cache hit — a different path from the one under test.
+			responseWriter.Header().Set("Cache-Control", "private, max-age=0, must-revalidate")
 
-		if status == http.StatusNotModified {
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(listBody) //nolint:errcheck
-	}))
-	defer ts.Close()
+			if status == http.StatusNotModified {
+				responseWriter.WriteHeader(http.StatusNotModified)
+				return
+			}
+			responseWriter.Header().Set("Content-Type", "application/json")
+			responseWriter.Write(listBody) //nolint:errcheck
+		}))
+	defer server.Close()
 
-	a, err := New(Config{
+	githubAdapter, err := New(Config{
 		Name:    "test",
 		Token:   "fake-token",
-		BaseURL: ts.URL,
+		BaseURL: server.URL,
 		Repos:   []adapter.RepoRef{{Owner: "owner", Repo: "repo"}},
 	})
 	if err != nil {
@@ -118,7 +119,7 @@ func TestListPullRequestsETagRevalidation(t *testing.T) {
 
 	ctx := context.Background()
 
-	first, err := a.ListPullRequests(ctx)
+	first, err := githubAdapter.ListPullRequests(ctx)
 	if err != nil {
 		t.Fatalf("first ListPullRequests: %v", err)
 	}
@@ -129,11 +130,11 @@ func TestListPullRequestsETagRevalidation(t *testing.T) {
 	// The error is checked after the request assertions: when the cache is
 	// missing, the unconditional 304 surfaces as a go-github error, and the
 	// absent If-None-Match is the more diagnostic failure to report.
-	second, secondErr := a.ListPullRequests(ctx)
+	second, secondErr := githubAdapter.ListPullRequests(ctx)
 
-	mu.Lock()
+	mutex.Lock()
 	requests := slices.Clone(seen)
-	mu.Unlock()
+	mutex.Unlock()
 
 	if len(requests) != 2 {
 		t.Fatalf("server saw %d requests, want exactly 2 (%+v)", len(requests), requests)
@@ -163,9 +164,9 @@ func TestListPullRequestsETagRevalidation(t *testing.T) {
 	}
 
 	// Guard against the degenerate "both calls returned empty" pass.
-	for i, pr := range second {
-		if pr.ProviderID == "" || pr.Number == 0 || pr.Title == "" || pr.HeadSHA == "" {
-			t.Errorf("second[%d] is not fully populated: %+v", i, prKeys(second)[i])
+	for index, pullRequest := range second {
+		if pullRequest.ProviderID == "" || pullRequest.Number == 0 || pullRequest.Title == "" || pullRequest.HeadSHA == "" {
+			t.Errorf("second[%d] is not fully populated: %+v", index, prKeys(second)[index])
 		}
 	}
 }
