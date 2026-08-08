@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 
 	gogithub "github.com/google/go-github/v88/github"
 	"github.com/lstellway/prsm/adapter"
@@ -32,12 +33,20 @@ type Config struct {
 }
 
 // GitHubAdapter is the prsm provider adapter for GitHub.
+// It is safe for concurrent use and must not be copied once constructed.
 type GitHubAdapter struct {
 	providerName string
 	instance     model.ProviderInstance // immutable after New(); Account is excluded
-	account      string                 // populated by ResolveIdentity; kept separate to avoid data races
 	repos        []adapter.RepoRef
 	rest         *gogithub.Client
+
+	// mu guards state resolved after construction. ADR-009's assembly layer
+	// resolves identity at startup while fetches are already fanning out, so
+	// ResolveIdentity and Instance genuinely run concurrently on one adapter.
+	// Holding Account outside instance avoids tearing the struct; it does not
+	// on its own make the string safe to read while another goroutine writes it.
+	mu      sync.RWMutex
+	account string // written by ResolveIdentity, read by Instance
 }
 
 // New constructs a GitHubAdapter from a Config.
@@ -90,9 +99,12 @@ func New(cfg Config) (*GitHubAdapter, error) {
 func (a *GitHubAdapter) Kind() model.ProviderKind { return model.ProviderGitHub }
 
 // Instance returns the full ProviderInstance this adapter serves.
-// Account is composed at call time from the separately stored account field so
-// that callers always see the value set by ResolveIdentity without a data race.
+// Account is composed at call time under the read lock, so callers always see
+// either the value set by ResolveIdentity or the empty string it started as —
+// never a partially written one.
 func (a *GitHubAdapter) Instance() model.ProviderInstance {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	inst := a.instance
 	inst.Account = a.account
 	return inst
@@ -113,7 +125,11 @@ func (a *GitHubAdapter) ResolveIdentity(ctx context.Context) (model.Identity, er
 	if name == "" {
 		name = user.GetLogin()
 	}
+
+	a.mu.Lock()
 	a.account = user.GetLogin()
+	a.mu.Unlock()
+
 	return model.Identity{
 		Username:    user.GetLogin(),
 		DisplayName: name,
@@ -147,6 +163,10 @@ func (a *GitHubAdapter) listRepoPRs(ctx context.Context, owner, repo string) ([]
 		ListOptions: gogithub.ListOptions{PerPage: 100},
 	}
 
+	// Read once so every PR in this call is stamped with the same instance,
+	// rather than later pages picking up an identity resolved mid-fetch.
+	inst := a.Instance()
+
 	var all []model.PullRequest
 	for page := 1; ; page++ {
 		if page > maxPages {
@@ -158,12 +178,12 @@ func (a *GitHubAdapter) listRepoPRs(ctx context.Context, owner, repo string) ([]
 		if err != nil {
 			return nil, fmt.Errorf("github %q: list PRs %s/%s: %w", a.providerName, owner, repo, err)
 		}
-		if rlErr := checkRateLimit(a.Instance(), resp.Response); rlErr != nil {
+		if rlErr := checkRateLimit(inst, resp.Response); rlErr != nil {
 			return nil, rlErr
 		}
 
 		for _, pr := range prs {
-			all = append(all, normalizePR(pr, owner, repo, a.Instance()))
+			all = append(all, normalizePR(pr, owner, repo, inst))
 		}
 
 		if resp.NextPage == 0 {
