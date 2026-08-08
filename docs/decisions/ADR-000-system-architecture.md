@@ -60,7 +60,13 @@ The normalized Go types that all adapters produce and all consumers receive. Def
 The filter, sort, and group logic that operates on resource model types. Defined in ADR-006.
 
 - `FilterSpec` is resource-typed: `PRFilterSpec` for pull requests, `IssueFilterSpec` for issues. A `BaseFilterSpec` holds universal fields (`Author`, `Label`, `Repo`, `Provider`, `StalenessGTE`, `State`). Resource-specific specs embed the base and add their own fields.
+
+  > **Amended by ADR-010 §5.** The universal set is `Author`, `Repo`, `Provider`, `Label`, `StalenessGTE`, `TargetBranch`. `State` is **per-resource**, not universal — the field *name* is shared but the *value domain* is not: pull requests are `open | closed | merged`, issues would be `open | closed`. `TargetBranch` joins the universal set. The embed relationship above is unchanged.
+
 - `Predicate[T any]` is a generic runtime type compiled from a `FilterSpec`. `PRFilterSpec.Compile()` → `Predicate[PullRequest]`. No union type or resource interface is needed at the predicate level.
+
+  > **Amended by ADR-010 §§2, 6.** `Compile` also reports the lazy fields the spec depends on, so a consumer can complete them before applying the predicate, and it takes the identity map relocated from `query` to `model`: `PRFilterSpec.Compile(model.ResolvedIdentities)` → `(Predicate[PullRequest], []model.LazyField, error)`. The claim that no union type or resource interface is needed is unchanged.
+
 - Sort and group keys are resource-scoped. Universal keys (`repo`, `provider`, `author`, `updated`, `created`, `staleness`) apply to all resource types. Resource-specific keys (`review_status` for PRs; `milestone` for Issues) are valid only for their declared resource type. Invalid keys for the declared resource type are a config load-time error.
 - The query layer is consumer-agnostic. The TUI, MCP server, HTTP API, and library all use the same `FilterSpec` → `Predicate[T]` pipeline. No consumer gets a special query path.
 
@@ -98,8 +104,11 @@ resource = "pr"        # required; "pr" | "issue" | future resource types
 
 [views.filter]
 reviewer = "me"
+state    = "open"
 draft    = false
 ```
+
+> **Amended by ADR-010 §1.** `state = "open"` was added to this example. It is not new syntax — `state` previously defaulted to `"open"` and could be omitted, and ADR-010 §1 drops that default so an omitted `state` now matches every state. Without the line, this view would silently span closed and merged PRs. Every example that relied on the old default changed meaning; the same correction applies in ADR-005 and in the shipped config at `config/defaults.go`.
 
 The `resource` field is required — not optional with a default — because defaulting to `"pr"` would encode an assumption that pull requests are the canonical resource type. All resource types are equals. A missing `resource` field is a config load-time error with a clear message.
 
@@ -118,6 +127,9 @@ The `resource` field is required — not optional with a default — because def
 - The resource model must not import adapter or consumer packages.
 - The query layer must not import adapter or consumer packages.
 - The Event Engine must not import consumer packages; it may import the resource model only.
+
+  > **See ADR-010 §6.** This rule is unchanged. It is, together with Layer 4's reuse of the `FilterSpec` vocabulary in hook filter expressions, the reason ADR-010 §6 relocates `ResolvedIdentities` from `query` to `model`: the Event Engine will have to resolve `"me"` sentinels in hook filters and may not name a `query` type.
+
 - The assembly layer may import adapters, model, query, event, and config. It must not import any consumer package, and must not import a UI or transport framework.
 - The config package must not import adapter packages.
 - Consumers may import all lower layers.

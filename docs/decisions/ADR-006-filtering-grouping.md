@@ -97,7 +97,7 @@ At filter evaluation time, `"me"` has already been resolved to a concrete `Provi
 
 ### 1. Essential v1 filters
 
-The following filter fields are supported in v1, all evaluated against list-time data (no lazy dependency):
+The following filter fields are supported in v1. Most evaluate against list-time data; `ci_status` and `review_status` depend on lazy fields — see §2:
 
 | Filter key | Type | Evaluates against | Notes |
 |---|---|---|---|
@@ -108,10 +108,18 @@ The following filter fields are supported in v1, all evaluated against list-time
 | `draft` | bool | `Draft` | `false` excludes drafts; `true` includes only drafts |
 | `label` | string or []string | `Labels[].Name` | AND-match: PR must carry all listed labels |
 | `repo` | string or []string | `Repo.Owner + "/" + Repo.Name` | `"owner/repo"` format; OR-match across list |
-| `provider` | string or []string | `Provider.Account` name from config | Matches the provider's configured `name` field |
+| `provider` | string or []string | `Provider.Name` | Matches the provider instance's configured `name` field |
 | `staleness_days` | int | `time.Since(UpdatedAt)` in days | Minimum age since last update (`>=` N days) |
-| `target_branch` | string | `TargetBranch` | Substring match; useful for `"main"` or `"release/*"` |
+| `target_branch` | string | `TargetBranch` | Literal, case-insensitive substring match; useful for `"main"` or `"release/"` |
 | `ci_status` | string enum | `CI.State` (lazy) | `"passing"`, `"failing"`, `"pending"`, `"none"` — see lazy-field behavior below |
+
+> **Superseded by ADR-010 §1** — the `state` row. `state` has no default. An omitted `state` means *all* states; `""` keeps its existing "no filter" meaning, and the "all PRs" baseline in §7 below is what an omitted `state` produces. `"draft"` is also no longer a `state` value: `state = "open"` includes drafts, per `model.PRStateDraft`'s existing "open + draft" definition, and draft-ness is expressed *only* by the `draft` bool. The value list is `"open"`, `"closed"`, `"merged"`, and `state = "draft"` is a config validation error. The rest of the row stands — the key, the type, and evaluation against `State`. Consequence accepted by ADR-010 §1: "open or merged" is not expressible.
+
+> **Corrected, not superseded** — the `provider` row. It previously read "`Provider.Account` name from config / Matches the provider's configured `name` field", which named one field and described another. It has always been `Provider.Name`, the configured instance alias (e.g. `github-personal`), never `Provider.Account`, the resolved login (e.g. `acme`). ADR-010 §4 settles the same ambiguity for the grouping key in §5 below, and ADR-010 §3 adds two things this row is silent on: provider names compare **exactly** (case-sensitively), and `filter.provider` must name a configured `[[providers]].name` or config load fails.
+
+> **Corrected, not superseded** — the `target_branch` row. The `"release/*"` example never worked; `target_branch` is a literal `strings.Contains`, so `"release/*"` matches only a branch whose name contains the literal characters `release/*` — the `*` is not a wildcard and no real branch matches. No glob is implemented, and none is promised here. The example is now `"release/"`, which does what the original intended. The match also lowercases both sides even though git refs are case-sensitive; that is noted, not decided.
+
+> **Corrected, not superseded** — the sentence introducing this table. It claimed all v1 filter fields are "evaluated against list-time data (no lazy dependency)", which contradicts the table's own `ci_status` row and ADR-004's availability tiers. `ci_status` depends on the lazy `CI` field and `review_status` depends on the lazy `Reviews.ReviewerStates`. See §2.
 
 **Deferred to v2:**
 - `source_branch` filter — low frequency; `target_branch` covers the primary use case (filter by base branch)
@@ -133,6 +141,33 @@ This approach avoids false positives (Option B) and false negatives (Option A) d
 
 The same behavior applies to `review_status` filtering when `Reviews.ReviewerStates` is `LoadStatePending`: the `AggregateState` derived from `RequestedReviewers` alone is used as the initial evaluation, with re-evaluation once the full reviewer states load. This works well because the RequestedReviewers-derived AggregateState is a conservative lower bound — it reliably identifies `"review_required"` PRs, which is the most important triage case.
 
+> **Superseded by ADR-010 §2.** Option C stands as the choice, but it was scoped to CI and it was wrong about two things. It is now stated as one rule over `LoadState`, applied to *every* lazy field a filter depends on, and the consumer loads those fields before applying the filter rather than waiting for the cursor to walk past them.
+>
+> **The rule: unknown matches, known compares.**
+>
+> | `LoadState` | Meaning | Filter behavior |
+> |---|---|---|
+> | `Pending` | not fetched yet | **match** |
+> | `Error` | fetched and failed | **match** |
+> | `Absent` | provider has no such concept | compare as `"none"` |
+> | `Loaded` | known | compare |
+>
+> **What changed, and why.**
+>
+> *Generalized from CI to any lazy field.* The paragraph above describes `review_status` as re-evaluating from a "conservative lower bound", but there is no passthrough in it — `review_status` compared the `AggregateState` for equality with nothing exempting the unloaded case, so `"approved"`, `"changes_requested"` and `"commented"` matched **nothing** until `Reviews.ReviewerStates` loaded. Those are triage queries #4 and #5 in the Context above, silently empty on first paint. Meanwhile `ci_status` passed everything through. Two lazy fields, opposite treatments, nothing justifying the asymmetry and no way for a user to predict which they were getting. That asymmetry was the defect; the rule above removes it.
+>
+> *Extended to terminal load failure.* The `LoadStateError` line above treats a failed fetch as `"none"`, which is a permanent lie rather than a transient one. A PR whose CI fetch failed both matched `ci_status = "none"` and was excluded from `ci_status = "failing"`, forever, and a fetch that failed on every poll would drop the PR out of every `ci_status` view at once. ADR-009 §3 requires that "no PRs" and "couldn't fetch" not look alike. `Error` now matches, and a consumer can render the row distinctly because `LoadResult.Err()` is already there. Accepted cost: a PR that errors every poll stays permanently visible in views it may not belong to. Visible-and-wrong beats invisible-and-wrong.
+>
+> *Direction of the error.* Passthrough over-matches, which looks obviously broken and gets fixed. Exclusion under-matches, which reads as a confident "no PRs are failing" and never gets investigated.
+>
+> *Not in tension with `"me"`.* An unresolved `"me"` matches **nothing** (ADR-009 §3) while an unknown lazy field matches **everything** — opposite dispositions, on different axes. A lazy field is per-pull-request data that is not yet known, with no provider-level signal to attribute a missing row to, so the row stays visible. `"me"` is the filter *term* failing to resolve: there is no login to compare against, so matching everything would silently reinterpret `author = "me"` as `author = anyone`, which is a different query rather than a broader one — and the gap is attributable, because the provider is marked offline in the same snapshot.
+>
+> `LoadStateAbsent` reading as `"none"` is unchanged from the original text. ADR-010 §2 records it as still open — whether "this provider has no CI concept" is a per-PR value or connection-level capability reporting is deferred until a non-CI-bearing adapter exists.
+>
+> **The pending window is now narrow, not the normal case.** ADR-010 §2 pairs this rule with a second half: `Compile` reports the lazy fields the spec depends on (see Consequences → Go predicate type) and the consumer loads them through assembly's `EnsureLoaded` before applying the predicate. A well-behaved consumer therefore sees `Pending` only for a PR that appeared between the load and the paint. A consumer that ignores the reported set gets the degraded behavior described above — documented, not silent.
+>
+> **`ci_status = "pending"` is not `LoadStatePending`.** The filter value names a CI state (a run in progress, `Loaded`); the load state names whether prsm has fetched the field at all. A PR whose CI has not been fetched matches every `ci_status` value including `"pending"`, and that is the rule above, not the value comparing to itself.
+
 ### 3. Filter composition: AND-only in v1
 
 All v1 filter predicates compose with AND. A PR must satisfy every specified filter to appear in the view.
@@ -152,7 +187,7 @@ resource = "pr"   # required on every view; scopes valid filter/sort/group keys
 author         = "me"
 draft          = false      # PR-specific field
 staleness_days = 3
-state          = "open"     # default; can omit
+state          = "open"     # PR-specific field; no default — omit to match all states
 
 # Label AND: PR must have both labels
 label          = ["needs-review", "priority-high"]
@@ -164,6 +199,12 @@ repo           = ["acme/api", "acme/frontend"]
 review_status  = "review_required"
 ci_status      = "passing"
 ```
+
+> **Amended per ADR-010 §1 and §5.** Two comment changes in the sample above; the TOML surface itself is unchanged.
+>
+> Per ADR-010 §1, `state = "open"` keeps its line but loses its `# default; can omit` comment. Omitting `state` now matches every state, so a view that wants only open pull requests must spell it, and the shipped default config does.
+>
+> Per ADR-010 §5, `state` is now annotated `# PR-specific field` alongside `draft`. The universal set — valid on any resource type, and the fields `BaseFilterSpec` carries — is `author`, `repo`, `provider`, `label`, `staleness_days`, `target_branch`. The PR-specific set on `PRFilterSpec` is `state`, `draft`, `reviewer`, `review_status`, `ci_status`. `state` is per-resource because the field *name* is shared across resources but the *value domain* is not: `open|closed|merged` for pull requests, `open|closed` for issues. The remaining comments in the sample were already correct.
 
 Multiple values for `label` require the PR to carry **all** listed labels (AND). Multiple values for `repo` and `provider` match if the PR is in **any** of the listed values (OR). This asymmetry is intentional and matches how these fields are used in practice: label combinations are "must have both"; repo/provider lists are "any of these."
 
@@ -200,9 +241,28 @@ At most one grouping is active at a time. Nested groupings (e.g., group by provi
 |---|---|---|---|
 | `none` | universal | No grouping; flat list | Single-provider or homogeneous repo setups |
 | `repo` | universal | `Repo.Owner + "/" + Repo.Name` | Most common: see all PRs per project |
-| `provider` | universal | `Provider.Account` name from config | Multi-provider users who want org-level separation |
+| `provider` | universal | `Provider.Name` | Multi-provider users who want org-level separation |
 | `author` | universal | `Author.Username` | Team leads reviewing the team's output |
 | `review_status` | PR only | `Reviews.AggregateState` | Triage-by-stage: "needs review" section first, "approved" section last |
+
+> **Corrected per ADR-010 §4** — the `provider` row. It read "`Provider.Account` name from config", the same ambiguous phrasing as the `provider` filter row in §1, and the implementation resolved the ambiguity the other way: the filter matched `Provider.Name` while the group key returned `Provider.Account`. ADR-010 §4 settles it at `Provider.Name` for both, so "provider" means one thing across the query layer.
+>
+> Two consequences for this table. Group headers read as the configured instance alias (`github-personal`), not the resolved org login (`acme`) — which is what the user wrote in config and can search for. And `Name` is always populated, whereas `Account` is set only after a successful identity call, so grouping on `Account` collapsed every PR from an identity-failed provider under the key `""`. That is exactly the "no PRs" / "couldn't fetch" confusion ADR-009 §3 forbids, and it disappears.
+>
+> Rendering the account alongside the name in a group header remains available to the TUI. That is a presentation concern, not a query-layer one, and it does not change the key.
+
+> **Amended by ADR-010 §8** — grouping on a lazy field. `review_status` is the only group key in this table that reads a lazily-loaded field, and grouping has no analogue for §2's "unknown matches" rule: every row must land in exactly one bucket.
+>
+> Two changes. `GroupSpec` reports its lazy-field dependency the way `Compile` does, so a consumer calling `EnsureLoaded` has the data before it renders. And any row still unresolved gets its own group, rendered last — never folded into an existing one:
+>
+> ```
+> ▾ changes requested (2)
+> ▾ review required (5)
+> ▾ none (1)
+> ▾ not loaded (3)     ← distinct, last, usually empty
+> ```
+>
+> This matters because `query/group.go` mapped an empty `AggregateState` to the `"none"` group, so a PR with three approvals whose reviews had not loaded sat under a header reading `none`. ADR-010 §7 gives `AggregateReviewStateNone` its own value (`"none"`) and reserves `""` for "not computed", which is what makes the two distinguishable here.
 
 Universal grouping keys are valid for all resource types. PR-only keys (`review_status`) are valid only when the view's `resource = "pr"` — using them on an Issue view is a config load-time error.
 
@@ -300,6 +360,33 @@ func (p Predicate[T]) And(other Predicate[T]) Predicate[T] {
 // converts the serialized spec into a runtime predicate, resolving "me" sentinels.
 ```
 
+> **Superseded by ADR-009 §5, then by ADR-010 §2, §5 and §6.** The `resolvedMe` map above is keyed by `ProviderKind`. Identities are keyed by `ProviderInstance.Name` instead, because several instances of one kind may be configured with different logins and keying by kind collapses them to a single identity (ADR-009 §5). The signature has moved further since that note was written; the current form is:
+>
+> ```go
+> // model
+> type ResolvedIdentities map[string]Identity // keyed by ProviderInstance.Name
+>
+> // query
+> func (filterSpec PRFilterSpec) Compile(
+>     identities model.ResolvedIdentities,
+> ) (Predicate[model.PullRequest], []model.LazyField, error) {
+>     identities = maps.Clone(identities)
+>     ...
+> }
+> ```
+>
+> **The identity map moved to `model` and holds `model.Identity`** (ADR-010 §6), so it is `model.ResolvedIdentities`, not `query.ResolvedIdentities` as the earlier note said. `event` will need to resolve `"me"` in hook filter expressions — `config.HookConfig` already carries a `FilterConfig` — and ADR-000 confines the Event Engine to the resource model, so it cannot be permitted to name a `query` type. `Identity` rather than `Author` because the map is consumed by reviewer matching as much as by author matching; it is an alias, so no behavior changes.
+>
+> **`Compile` clones the map.** A compiled predicate is immutable with respect to later identity changes. Assembly writes into the map when a provider's identity recovers while a consumer reads it per keystroke through an already-compiled predicate — the same data race shape as the one fixed in commit `6b7512d`. The clone also turns the "recompile when identities become available" line in Bubble Tea integration below from documentation into a property the code enforces.
+>
+> **`Compile` also returns the lazy fields the spec depends on** (ADR-010 §2). `[]model.LazyField` enumerates the `LoadResult` fields a predicate will read — `ci`, `reviews`, `diff` — so a consumer can complete them through assembly's `EnsureLoaded` before applying the predicate rather than filtering against unloaded data. `Compile` *reports* a dependency; it schedules nothing. ADR-009 §2's split — mechanism shared, trigger per consumer — is unchanged.
+>
+> **This is what makes reason (1) above load-bearing beyond serialization.** The declarative struct form is not merely a convenience for TOML round-tripping: it is the only reason `Compile` can report lazy-field dependencies at all. An opaque `func(PullRequest) bool` hides which fields the predicate touches, so a consumer holding one could only load every lazy field, load none, or guess — and the returned closure would be indistinguishable in each case. Anyone tempted to simplify `FilterSpec` into a closure is trading this away, not just serializability.
+>
+> **The spec is now split** (ADR-010 §5). `FilterSpec` above becomes `BaseFilterSpec` — `Author`, `Repo`, `Provider`, `Label`, `StalenessGTE`, `TargetBranch` — embedded in a per-resource `PRFilterSpec` carrying `State`, `Draft`, `Reviewer`, `ReviewStatus`, `CIStatus`. `State` is per-resource because the field name is shared across resources but the value domain is not. The embed provides no code reuse today; every predicate constructor is hard-typed `Predicate[model.PullRequest]` and a second resource type is what triggers the generic pass.
+>
+> **The rest of this section stands**, including reason (2) and the `Predicate[T]`/`And` shape.
+
 `FilterSpec` maps 1:1 to the `[views.filter]` TOML table. The `Compile` method produces a `Predicate[PullRequest]` that is applied by the Bubble Tea Update function when the PR list is refreshed.
 
 ### Bubble Tea integration
@@ -314,11 +401,23 @@ When a tea.Msg arrives carrying new or updated PR data (e.g., a secondary fetch 
 
 The fuzzy match for `/` is computed on-the-fly for each keystroke. The composite target string per PR is precomputed and cached in the model (`fuzzyIndex map[string]string` keyed by `ProviderID`) to avoid string concatenation on every keystroke.
 
+> **Amended per ADR-010 §2.** The re-evaluation model above assumes the lazy fields a filter reads will eventually load for every visible row, and leaves *when* to the TUI's cursor-driven policy. That is not sufficient on its own: on a cursor-driven policy alone, `ci_status = "failing"` matches everything on first paint and decays toward correctness only along the path the cursor happens to walk.
+>
+> The TUI therefore gains one exception to its cursor-driven policy. On view activation, it calls `Compile`, takes the returned `[]model.LazyField`, and batch-loads that set across the snapshot through assembly's `EnsureLoaded` **before first paint**. Cursor-driven loading remains the policy for everything else — fields no active filter depends on, and pull requests that arrive after the batch.
+>
+> The re-evaluation machinery described above is unchanged and still required. It now covers a narrow residual case — a pull request that appeared between the batch load and the paint, or one whose load returned `LoadStateError` and is later retried — rather than being the primary path to a correct list. `EnsureLoaded` is bounded and capped, so a large snapshot may return with the cap reported; the TUI must surface that rather than paint a filtered list that silently covers only part of the set.
+
 ### Startup: resolving `"me"` sentinels
 
 At startup, before the TUI renders, prsm makes a `GET /user` (GitHub) / `GET /api/v4/user` (GitLab) / `GET /api/v1/user` (Gitea) call per configured provider to resolve the authenticated user's identity. This call is cheap (< 1 KB response, no pagination) and is made concurrently with the initial PR list fetch. If the identity call fails for a provider, filters using `"me"` for that provider are disabled with a startup warning; other providers continue normally.
 
 The resolved identities are stored in the model as `map[ProviderKind]ResolvedIdentity` and passed to `FilterSpec.Compile`.
+
+> **Superseded by ADR-009 §5 and ADR-010 §6.** Both sentences above are stale.
+>
+> **"Disabled with a startup warning" reads as pass-through** — as though a `"me"` filter stops constraining the result and that provider's pull requests all appear. It does not. Per ADR-009 §3, a provider whose identity cannot be resolved is marked offline, and `"me"` **matches nothing** for that instance until it recovers. An unresolved sentinel has no login to compare against; matching everything would silently reinterpret `author = "me"` as `author = anyone`, which is a different query rather than a broader one. The warning stands — the provider's degraded state must be visible, since ADR-009 §3 requires "no PRs from this provider" and "this provider is unreachable" not to look alike — but the filter behavior is non-match, not disable. Note this is the opposite disposition from an unknown *lazy field*, which matches; §2 above explains why the two are on different axes.
+>
+> **The identity map is not keyed by `ProviderKind`.** It is `model.ResolvedIdentities` — `map[string]model.Identity`, keyed by `ProviderInstance.Name` (ADR-009 §5), declared in `model` rather than `query` (ADR-010 §6), and cloned inside `Compile`. The earlier note under "Go predicate type" corrected the keying but left this sentence behind; see that note for the full current signature.
 
 ### Performance: lazy-field re-evaluation
 

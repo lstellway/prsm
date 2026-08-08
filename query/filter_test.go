@@ -9,8 +9,11 @@ import (
 
 func boolPointer(value bool) *bool { return &value }
 
-var resolvedMe = map[model.ProviderKind]model.Author{
-	model.ProviderGitHub: {Username: "bob"},
+// resolvedMe is keyed by provider instance name, matching the Provider.Name that
+// githubPR builds. Nothing is resolved for any other instance, so "me" against a
+// PR from one of those must not match.
+var resolvedMe = query.ResolvedIdentities{
+	"github-personal": {Username: "bob"},
 }
 
 func githubPR(options ...func(*model.PullRequest)) model.PullRequest {
@@ -322,9 +325,10 @@ func TestCompile_DraftBoolField(t *testing.T) {
 }
 
 func TestCompile_ResolveMe_UnknownProvider(t *testing.T) {
-	// resolvedMe has no entry for GitLab — "me" should not match any GitLab PR
+	// resolvedMe has no entry for the "gitlab-work" instance — "me" must not match its
+	// PRs even though the author's username collides with the resolved GitHub identity.
 	gitlabPullRequest := model.PullRequest{
-		Provider: model.ProviderInstance{Kind: model.ProviderGitLab},
+		Provider: model.ProviderInstance{Name: "gitlab-work", Kind: model.ProviderGitLab},
 		Author:   model.Author{Username: "bob"},
 		State:    model.PRStateOpen,
 	}
@@ -341,7 +345,7 @@ func TestCompile_ResolveMe_UnknownProvider(t *testing.T) {
 func TestCompile_ResolveMe_EmptyUsername(t *testing.T) {
 	// A PR with an empty Author.Username must not match author="me" when "me" is unresolved
 	emptyAuthorPullRequest := model.PullRequest{
-		Provider: model.ProviderInstance{Kind: model.ProviderGitLab},
+		Provider: model.ProviderInstance{Name: "gitlab-work", Kind: model.ProviderGitLab},
 		Author:   model.Author{Username: ""},
 		State:    model.PRStateOpen,
 	}
@@ -352,6 +356,82 @@ func TestCompile_ResolveMe_EmptyUsername(t *testing.T) {
 	}
 	if predicate(emptyAuthorPullRequest) {
 		t.Error("unresolved 'me' must not match a PR with an empty author username")
+	}
+}
+
+// TestCompile_ResolveMe_TwoInstancesOfOneKind is the regression test for keying
+// identities by provider instance rather than by ProviderKind. github.com and a
+// GitHub Enterprise Server are both ProviderGitHub but authenticate as different
+// logins; keying by kind collapsed them so one instance's identity won and "me"
+// silently resolved wrong for the other.
+func TestCompile_ResolveMe_TwoInstancesOfOneKind(t *testing.T) {
+	identities := query.ResolvedIdentities{
+		"github-personal": {Username: "bob"},
+		"github-work":     {Username: "robert"},
+	}
+
+	pullRequestOn := func(instanceName, username string) model.PullRequest {
+		return model.PullRequest{
+			Provider: model.ProviderInstance{Name: instanceName, Kind: model.ProviderGitHub},
+			Author:   model.Author{Username: username},
+			Reviews:  model.ReviewSummary{RequestedReviewers: []model.ReviewerState{{Reviewer: model.Reviewer{Username: username}}}},
+			State:    model.PRStateOpen,
+		}
+	}
+
+	tests := []struct {
+		name        string
+		pullRequest model.PullRequest
+		want        bool
+	}{
+		{
+			name:        "personal instance, personal login → match",
+			pullRequest: pullRequestOn("github-personal", "bob"),
+			want:        true,
+		},
+		{
+			name:        "work instance, work login → match",
+			pullRequest: pullRequestOn("github-work", "robert"),
+			want:        true,
+		},
+		{
+			name:        "personal instance, work login → no match",
+			pullRequest: pullRequestOn("github-personal", "robert"),
+			want:        false,
+		},
+		{
+			name:        "work instance, personal login → no match",
+			pullRequest: pullRequestOn("github-work", "bob"),
+			want:        false,
+		},
+		{
+			name:        "unresolved third instance → no match",
+			pullRequest: pullRequestOn("github-oss", "bob"),
+			want:        false,
+		},
+	}
+
+	for _, field := range []string{"author", "reviewer"} {
+		t.Run(field, func(t *testing.T) {
+			filterSpec := query.PRFilterSpec{}
+			if field == "author" {
+				filterSpec.Author = "me"
+			} else {
+				filterSpec.Reviewer = "me"
+			}
+			predicate, err := filterSpec.Compile(identities)
+			if err != nil {
+				t.Fatalf("Compile() error: %v", err)
+			}
+
+			for _, testCase := range tests {
+				t.Run(testCase.name, func(t *testing.T) {
+					if got := predicate(testCase.pullRequest); got != testCase.want {
+						t.Errorf("predicate() = %v, want %v", got, testCase.want)
+					}
+				})
+			}
+		})
 	}
 }
 

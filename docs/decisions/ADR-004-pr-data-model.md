@@ -45,6 +45,10 @@ Raw `*T` pointer fields are ambiguous: `nil` means "this field was not included 
 
 The chosen approach is a generic `LoadResult[T]` type with three states: **Pending** (not yet fetched), **Loaded** (fetched, has a value), and **Absent** (provider does not expose this field). This is preferred over raw pointers because it explicitly models fetch lifecycle alongside nullability.
 
+> **Amended by ADR-010 §2.** Two corrections. First, `LoadResult[T]` has four states, not three — `LoadStateError` (fetched and failed) was added and appears in the const block below; the paragraph above predates it. Second, how a *filter* treats each state is not a model decision and is not specified here — ADR-010 §2 owns it. In short: `Pending` and `Error` mean "unknown" and match; `Loaded` and `Absent` mean "known" and compare, with `Absent` reading as the field's `none` value. That replaces the earlier behavior in which `Error` collapsed to `CIStateNone`, which made a failed CI fetch read as "no CI" permanently and silently.
+
+> **Deferred, not decided.** Whether `Absent` legitimately means `none` is unsettled. CLAUDE.md holds that capability is a property of a *connection*, so "this provider has no CI concept" may belong in connection-level capability reporting rather than in a per-PR value that quietly satisfies `ci_status = "none"`. Nothing produces `Absent` today — GitLab and Gitea are `Config`-only stubs — so the question is deferred until a non-CI-bearing adapter exists.
+
 ### Review state vocabulary across providers
 
 | State | GitHub | GitLab | Gitea/Forgejo |
@@ -190,6 +194,19 @@ const (
     AggregateReviewCommented        AggregateReviewState = "commented"          // reviews exist but all are comment-only
 )
 
+// Reaffirmed by ADR-010 §7. `AggregateReviewNone` is "none" as written above.
+// The implementation regressed from this ADR: model/review.go:19 set it to "",
+// colliding with the zero value, so "computed, and there are no reviews" became
+// indistinguishable from "never computed" — which is why review_status = "none"
+// matched a PR approved by three reviewers whose aggregate was never populated.
+//
+// ADR-010 §7 restores "none" and gives "" a defined meaning: it is the zero value,
+// it is NOT a member of this enum, and it means "not yet computed". Adapters leave
+// the field at "" until they can say something true about it — see
+// adapter/github/normalize.go, which sets review_required only when requested
+// reviewers exist. Filters treat "" as unknown; grouping gives it its own bucket
+// per ADR-010 §8.
+
 // CIState is the overall status of CI/check runs for the PR head commit.
 type CIState string
 
@@ -209,6 +226,14 @@ const (
     MergeableStateUnknown     MergeableState = "unknown" // not yet computed by provider
 )
 ```
+
+> **Corrected by ADR-010 §7.** This ADR contradicts itself about `MergeableStateUnknown`: the block above assigns it `"unknown"`, while "The normalized PR type" below states *"The zero value is `MergeableStateUnknown`"* — which is true only if it is `""`. `model/common.go:33` implements `""`, the reading that makes both statements consistent.
+>
+> **`""` is correct and this block is the error.** Keeping the unknown sentinel *at* the zero value is what makes the invariant hold without a constructor: a `PullRequest` composite literal that never assigns `Mergeable` is automatically unknown rather than silently claiming a real answer. Assigning `"unknown"` instead would leave `""` as a fourth state with no name and no meaning — the exact shape of the `AggregateReviewState` defect ADR-010 §7 corrects.
+>
+> `MergeableState` is therefore the reference example of the convention in "Design notes → Unknown values", not a deviation from it.
+
+> **Amended by ADR-010 §1.** `PRStateDraft`'s comment above — "open + draft; draft is surfaced separately for triage" — no longer describes what happens. Draft-ness is surfaced for triage through the `draft` bool filter, not through a `state` value: ADR-010 §1 removes `"draft"` from the `filter.state` vocabulary (`state = "draft"` becomes a config validation error) and makes `state = "open"` accept `PRStateDraft` as well as `PRStateOpen`, per `model/pr.go:12`'s existing "open + draft" definition. Read the comment as `// open + draft; a vendor may report draft as a lifecycle state of its own`. The enum value stays and adapters keep normalizing to it (`adapter/github/normalize.go:59`) — the model is unchanged, only the filter vocabulary narrows. Dropping `PRStateDraft` from the model was considered and rejected: it would remove the ability to represent a vendor that only ever reports "draft" as a state.
 
 ### Supporting types
 
@@ -362,13 +387,43 @@ type PullRequest struct {
 }
 ```
 
+> **Amended by ADR-010 §1.** The `State` and `Draft` field comments above have their roles backwards relative to what the query layer does. `State`'s comment claims draft PRs are `PRStateDraft` "to allow the display layer to filter or group them without checking a separate boolean" — under ADR-010 §1 the state filter must check both fields (`State == PRStateDraft || Draft`), and no grouping key reads `State` at all. `Draft`'s comment lists "filtering convenience" as a secondary role after "providers that do not collapse draft into state"; filtering is now the *primary* role, because the `draft` bool is the only way to express draft-ness in a filter. Both fields stay exactly as declared — this corrects the stated rationale, not the type.
+
 ### Design notes
 
 **`PRState` vs. separate `Draft` bool:** The `State` enum includes `PRStateDraft` as a discrete state rather than encoding draft as `PRStateOpen + Draft: true`. This makes filter expressions simpler (compare one field, not two). The `Draft bool` field is retained alongside it for providers that need it separately and as a convenience for adapters that set `State` first and then apply the draft flag in a second pass.
 
+> **Amended by ADR-010 §1.** The simplicity rationale above did not survive contact with the filter layer, and the decision is now retained for a different reason than the one it was made for.
+>
+> "Compare one field, not two" is not what a correct filter can do. GitHub never reports `PRStateOpen` for a draft (`adapter/github/normalize.go:59`), while a provider using the `State=open, Draft=true` encoding never reports `PRStateDraft` — so any predicate over draft-ness has to read both. `matchesDraftState` already did (`State == PRStateDraft || Draft`), and under ADR-010 §1 `matchesPRState` does too. The dual encoding is not a simplification of the filter; it is what made `state = "open"` silently hide every draft on GitHub, and what made the same spec (`state = "open", draft = true`) return different sets on different vendors — the opposite of "views are vendor-agnostic".
+>
+> `PRStateDraft` is nonetheless kept, on representability grounds rather than filter-simplicity grounds: a vendor that only ever reports "draft" as a lifecycle state needs somewhere for that to land, and collapsing the enum would remove that. The cost is paid once, inside the query layer, and it is bounded — ADR-010 §1 gives the filter vocabulary exactly one spelling for draft-ness (`draft = true|false`), removing `state = "draft"`, so a user never has to know the dual encoding exists even though adapters still produce it.
+
 **`ProviderID` as string:** Provider IDs are int64 in practice for all three v1 providers, but normalizing to string avoids coupling the schema to a numeric type and makes the field safe for any future provider (e.g., Bitbucket uses UUIDs).
 
 **`LoadResult[T]` over `*T` pointers:** Raw pointer fields create ambiguity between "not loaded" and "explicitly absent." `LoadResult[T]` makes fetch lifecycle a first-class concern, enabling the TUI to show appropriate indicators (spinner for pending, dash for absent, value for loaded) without ad-hoc nil checks throughout the view layer. The generic form keeps the implementation compact and type-safe without requiring a separate wrapper type per field.
+
+**Unknown values — the two-axis rule** *(added by ADR-010 §7)*
+
+Every model field that may be unknown answers two independent questions. Conflating them has produced the same defect four separate times, so the rule is written down rather than left to precedent.
+
+**Axis 1 — within an enum: the zero value means *unknown*, and it gets an explicit name.** Every real answer, including "genuinely none", gets a non-empty value. The unknown sentinel stays *at* the zero value so the invariant holds without a constructor: a composite literal that never assigns the field is automatically unknown rather than silently claiming an answer. Moving the sentinel to a non-empty value would leave `""` as an unnamed state with no meaning.
+
+**Axis 2 — whether to wrap: `LoadResult[T]` wraps a field if and only if it is fetched over the network on its own schedule.** Its four states describe the *fetch*, never the value. Anything the provider actually told us — including "the provider says it doesn't know yet" and "the answer is nothing" — is a named member of the field's own enum. A field **computed locally** is never wrapped: wrapping `ReviewSummary.AggregateState` would create an `Error` state that a pure function over in-memory data cannot reach and an `Absent` state that `ComputeAggregateReviewState` cannot produce, and `IsLoaded()` would become false advertising for a value that is refined in place by design.
+
+Applied to the model as it stands:
+
+| Field | Fetched? | Shape | Verdict |
+|---|---|---|---|
+| `CI LoadResult[CIStatus]` | yes | wrapped; `CIStatePending`/`CIStateNone` are named members, `""` reserved | reference example |
+| `Diff LoadResult[DiffStats]` | yes | wrapped | conforms |
+| `Reviews.ReviewerStates LoadResult[[]ReviewerState]` | yes | wrapped | conforms |
+| `Reviews.AggregateState` | no — computed | bare enum, `""` = not computed | conforms once ADR-010 §7 lands |
+| `Mergeable MergeableState` | yes | bare enum, `MergeableStateUnknown = ""` | Axis 1 correct; Axis 2 pending — see below |
+
+`Mergeable` is the one field the rule does not yet fit: it is fetched (GitHub computes mergeability asynchronously and omits it at list time — see the field-availability table above), so Axis 2 says it should be `LoadResult[MergeableState]`, with the wrapper carrying "prsm has not fetched it" and the enum member `MergeableStateUnknown` carrying "the provider is still computing it." Those are genuinely different and currently collapse into one `""`. No adapter assigns the field today and nothing reads it, so this is recorded rather than actioned.
+
+Note that Axis 2 is about *when to wrap*, and is independent of the reason channel `LoadStateAbsent` needs; that is tracked separately and does not conflict with this rule.
 
 **No `Score` or `Urgency` field:** Priority is a view configuration concern, not a data property. A user's priority definition is a multi-key sort expression — `changed_files ASC, created_at DESC` — not a number. Sort expressions are transparent, serializable to config, and composable; a score collapses multiple signals into one opaque value that requires trusting someone else's weighting. The data model provides the raw fields; the query layer orders them.
 
@@ -397,6 +452,17 @@ The Bubble Tea command model fires secondary fetch commands concurrently with li
 ### Filtering and sorting
 
 Filter and sort expressions operate on `PullRequest` fields. The view layer treats `LoadStatePending` fields as "no signal" for sorting (sort-last) and shows a spinner/placeholder for filtering. `LoadStateAbsent` fields are treated as excluded from filter criteria rather than as failing the filter.
+
+> **Amended by ADR-010 §1 and §2.** The sorting half stands — `LoadStatePending` still sorts last. The filtering half does not:
+>
+> - **Filtering is the query layer's job, not the view layer's.** The compiled predicate decides membership before anything renders; "shows a spinner/placeholder for filtering" conflates the two.
+> - **`LoadStatePending` matches**, and so does `LoadStateError`, which this paragraph does not mention because the state postdates it. ADR-010 §2's rule is one line: unknown matches, known compares.
+> - **`LoadStateAbsent` is not excluded from filter criteria.** It compares, reading as the field's `none` value — so an absent `CI` satisfies `ci_status = "none"` and fails `ci_status = "failing"`. Whether that is right is deferred; see the note under "The 'not loaded yet' vs. 'not present' distinction".
+> - **Lazy fields are prefetched, not waited on.** ADR-010 §2 has `Compile` report the lazy fields its predicate depends on so the consumer can load them before applying the filter. The pending window is therefore a sub-second gap for a PR that arrived mid-load, not the steady state this paragraph implies.
+>
+> `state` filtering is also no longer what this section's era assumed — ADR-010 §1 narrows the `filter.state` vocabulary to `open | closed | merged` and folds drafts into `open`.
+>
+> One thing ADR-010 §2 does not reach: `review_status` filters on `ReviewSummary.AggregateState`, which is a plain enum field with no `LoadState` of its own. Applying "unknown matches" there means reading the load state off a *different* field, `Reviews.ReviewerStates`. The rule works but the model does not express it; see the `ReviewSummary` design note above.
 
 ### Future extensibility
 

@@ -8,11 +8,17 @@ import (
 	"github.com/lstellway/prsm/model"
 )
 
+// ResolvedIdentities maps provider instance name (ProviderInstance.Name) to the
+// authenticated user's identity on that instance. Keying by instance rather than
+// by ProviderKind is required by ADR-009 §5: several instances of one kind may be
+// configured with different logins, and keying by kind collapses them to one identity.
+type ResolvedIdentities map[string]model.Author
+
 // BaseFilterSpec holds filter fields that apply to any resource type.
 type BaseFilterSpec struct {
-	Author   string   // "" = no filter; "me" = authenticated user per provider
+	Author   string   // "" = no filter; "me" = authenticated user per provider instance
 	Repo     []string // OR-match: "owner/repo" format
-	Provider []string // OR-match: matches Provider.Account
+	Provider []string // OR-match: matches Provider.Name
 }
 
 // PRFilterSpec is the serializable filter specification for a named view over pull requests.
@@ -31,73 +37,80 @@ type PRFilterSpec struct {
 }
 
 // Compile builds a Predicate[model.PullRequest] from the spec.
-// resolvedMe maps provider kind to the authenticated user's identity, used to resolve "me" sentinels.
-func (filterSpec PRFilterSpec) Compile(resolvedMe map[model.ProviderKind]model.Author) (Predicate[model.PullRequest], error) {
+// resolvedMe supplies the authenticated user's identity per provider instance,
+// used to resolve "me" sentinels.
+func (filterSpec PRFilterSpec) Compile(resolvedMe ResolvedIdentities) (Predicate[model.PullRequest], error) {
 	predicate := Predicate[model.PullRequest](func(model.PullRequest) bool { return true })
 
 	if filterSpec.Author != "" {
-		predicate = predicate.And(authorPred(filterSpec.Author, resolvedMe))
+		predicate = predicate.And(matchesAuthor(filterSpec.Author, resolvedMe))
 	}
 	if len(filterSpec.Repo) > 0 {
-		predicate = predicate.And(repoPred(filterSpec.Repo))
+		predicate = predicate.And(matchesAnyRepo(filterSpec.Repo))
 	}
 	if len(filterSpec.Provider) > 0 {
-		predicate = predicate.And(providerPred(filterSpec.Provider))
+		predicate = predicate.And(matchesAnyProviderName(filterSpec.Provider))
 	}
 	if filterSpec.Reviewer != "" {
-		predicate = predicate.And(reviewerPred(filterSpec.Reviewer, resolvedMe))
+		predicate = predicate.And(matchesRequestedReviewer(filterSpec.Reviewer, resolvedMe))
 	}
 	if filterSpec.ReviewStatus != "" {
 		aggregateState, err := parseAggregateReviewState(filterSpec.ReviewStatus)
 		if err != nil {
 			return nil, err
 		}
-		predicate = predicate.And(reviewStatusPred(aggregateState))
+		predicate = predicate.And(matchesAggregateReviewState(aggregateState))
 	}
 	if filterSpec.State != "" {
 		state, err := parsePRState(filterSpec.State)
 		if err != nil {
 			return nil, err
 		}
-		predicate = predicate.And(statePred(state))
+		predicate = predicate.And(matchesPRState(state))
 	}
 	if filterSpec.Draft != nil {
-		predicate = predicate.And(draftPred(*filterSpec.Draft))
+		predicate = predicate.And(matchesDraftState(*filterSpec.Draft))
 	}
 	if len(filterSpec.Label) > 0 {
-		predicate = predicate.And(labelPred(filterSpec.Label))
+		predicate = predicate.And(matchesAllLabels(filterSpec.Label))
 	}
 	if filterSpec.StalenessGTE > 0 {
-		predicate = predicate.And(stalenessPred(filterSpec.StalenessGTE))
+		predicate = predicate.And(matchesStalenessAtLeast(filterSpec.StalenessGTE))
 	}
 	if filterSpec.TargetBranch != "" {
-		predicate = predicate.And(targetBranchPred(filterSpec.TargetBranch))
+		predicate = predicate.And(matchesTargetBranchSubstring(filterSpec.TargetBranch))
 	}
 	if filterSpec.CIStatus != "" {
 		ciState, err := parseCIState(filterSpec.CIStatus)
 		if err != nil {
 			return nil, err
 		}
-		predicate = predicate.And(ciStatusPred(ciState))
+		predicate = predicate.And(matchesCIState(ciState))
 	}
 
 	return predicate, nil
 }
 
 // resolveMe returns the username to compare against for a "me" sentinel.
-// Returns ("", false) when "me" cannot be resolved for the PR's provider kind —
-// callers must treat an unresolved "me" as a non-match rather than comparing against "".
-func resolveMe(raw string, pullRequest model.PullRequest, resolvedMe map[model.ProviderKind]model.Author) (string, bool) {
+// The PR is matched against the identity of the provider instance it belongs to;
+// the lookup is exact, since both the key and pullRequest.Provider.Name originate
+// from the same configured ProviderInstance.
+// Returns ("", false) when "me" cannot be resolved for that instance — which is also
+// the case for an instance that is offline because its identity never resolved.
+// Callers must treat an unresolved "me" as a non-match rather than comparing against "".
+func resolveMe(raw string, pullRequest model.PullRequest, resolvedMe ResolvedIdentities) (string, bool) {
 	if raw != "me" {
 		return raw, true
 	}
-	if identity, ok := resolvedMe[pullRequest.Provider.Kind]; ok {
+	if identity, ok := resolvedMe[pullRequest.Provider.Name]; ok {
 		return identity.Username, true
 	}
 	return "", false
 }
 
-func authorPred(author string, resolvedMe map[model.ProviderKind]model.Author) Predicate[model.PullRequest] {
+// matchesAuthor compares the PR's author against the configured username,
+// resolving a "me" sentinel against the identity of the PR's provider instance.
+func matchesAuthor(author string, resolvedMe ResolvedIdentities) Predicate[model.PullRequest] {
 	return func(pullRequest model.PullRequest) bool {
 		target, ok := resolveMe(author, pullRequest, resolvedMe)
 		if !ok {
@@ -107,7 +120,11 @@ func authorPred(author string, resolvedMe map[model.ProviderKind]model.Author) P
 	}
 }
 
-func reviewerPred(reviewer string, resolvedMe map[model.ProviderKind]model.Author) Predicate[model.PullRequest] {
+// matchesRequestedReviewer matches a PR that has the given username among its
+// requested reviewers, resolving a "me" sentinel against the identity of the PR's
+// provider instance. Only pending review requests are considered — a reviewer who
+// has already submitted a decision is matched by review status, not by this.
+func matchesRequestedReviewer(reviewer string, resolvedMe ResolvedIdentities) Predicate[model.PullRequest] {
 	return func(pullRequest model.PullRequest) bool {
 		target, ok := resolveMe(reviewer, pullRequest, resolvedMe)
 		if !ok {
@@ -122,30 +139,30 @@ func reviewerPred(reviewer string, resolvedMe map[model.ProviderKind]model.Autho
 	}
 }
 
-func reviewStatusPred(status model.AggregateReviewState) Predicate[model.PullRequest] {
+func matchesAggregateReviewState(status model.AggregateReviewState) Predicate[model.PullRequest] {
 	return func(pullRequest model.PullRequest) bool {
 		return pullRequest.Reviews.AggregateState == status
 	}
 }
 
-func statePred(state model.PRState) Predicate[model.PullRequest] {
+func matchesPRState(state model.PRState) Predicate[model.PullRequest] {
 	return func(pullRequest model.PullRequest) bool {
 		return pullRequest.State == state
 	}
 }
 
-// draftPred filters based on whether a PR is a draft.
+// matchesDraftState filters based on whether a PR is a draft.
 // Checks both State == PRStateDraft (providers that encode draft as state) and
 // the Draft bool (providers that expose it as a separate field alongside PRStateOpen).
-func draftPred(draft bool) Predicate[model.PullRequest] {
+func matchesDraftState(draft bool) Predicate[model.PullRequest] {
 	return func(pullRequest model.PullRequest) bool {
 		isDraft := pullRequest.State == model.PRStateDraft || pullRequest.Draft
 		return isDraft == draft
 	}
 }
 
-// labelPred implements AND-match: the PR must carry every listed label.
-func labelPred(labels []string) Predicate[model.PullRequest] {
+// matchesAllLabels implements AND-match: the PR must carry every listed label.
+func matchesAllLabels(labels []string) Predicate[model.PullRequest] {
 	return func(pullRequest model.PullRequest) bool {
 		for _, required := range labels {
 			found := false
@@ -163,8 +180,8 @@ func labelPred(labels []string) Predicate[model.PullRequest] {
 	}
 }
 
-// repoPred implements OR-match: the PR must be in at least one of the listed repos.
-func repoPred(repos []string) Predicate[model.PullRequest] {
+// matchesAnyRepo implements OR-match: the PR must be in at least one of the listed repos.
+func matchesAnyRepo(repos []string) Predicate[model.PullRequest] {
 	return func(pullRequest model.PullRequest) bool {
 		fullName := pullRequest.Repo.Owner + "/" + pullRequest.Repo.Name
 		for _, repo := range repos {
@@ -176,10 +193,10 @@ func repoPred(repos []string) Predicate[model.PullRequest] {
 	}
 }
 
-// providerPred implements OR-match: the PR must be from at least one of the listed providers.
+// matchesAnyProviderName implements OR-match: the PR must be from at least one of the listed providers.
 // Matches against Provider.Name (the user-assigned config alias, e.g. "github-personal"),
 // consistent with FilterConfig.Provider in config/.
-func providerPred(providers []string) Predicate[model.PullRequest] {
+func matchesAnyProviderName(providers []string) Predicate[model.PullRequest] {
 	return func(pullRequest model.PullRequest) bool {
 		for _, providerName := range providers {
 			if strings.EqualFold(pullRequest.Provider.Name, providerName) {
@@ -190,24 +207,24 @@ func providerPred(providers []string) Predicate[model.PullRequest] {
 	}
 }
 
-func stalenessPred(days int) Predicate[model.PullRequest] {
+func matchesStalenessAtLeast(days int) Predicate[model.PullRequest] {
 	return func(pullRequest model.PullRequest) bool {
 		staleness := time.Since(pullRequest.UpdatedAt)
 		return int(staleness.Hours()/24) >= days
 	}
 }
 
-func targetBranchPred(branch string) Predicate[model.PullRequest] {
+func matchesTargetBranchSubstring(branch string) Predicate[model.PullRequest] {
 	lowerBranch := strings.ToLower(branch)
 	return func(pullRequest model.PullRequest) bool {
 		return strings.Contains(strings.ToLower(pullRequest.TargetBranch), lowerBranch)
 	}
 }
 
-// ciStatusPred implements Option C from ADR-006: pending items pass through,
+// matchesCIState implements Option C from ADR-006: pending items pass through,
 // remaining visible until their CI data loads. LoadStateAbsent and LoadStateError
 // are treated as CIStateNone for filter evaluation.
-func ciStatusPred(status model.CIState) Predicate[model.PullRequest] {
+func matchesCIState(status model.CIState) Predicate[model.PullRequest] {
 	return func(pullRequest model.PullRequest) bool {
 		if pullRequest.CI.IsPending() {
 			return true

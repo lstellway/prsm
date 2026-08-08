@@ -146,6 +146,16 @@ Filter keys, sort keys, and grouping keys are resource-scoped: keys valid for `"
 | `ci_status` | string | `"passing"`, `"failing"`, `"pending"`, `"none"`. |
 | `review_status` | string | `"approved"`, `"changes_requested"`, `"commented"`, `"none"`. |
 
+> **Amended by ADR-010 §§1, 5.** Three corrections to the two tables above.
+>
+> **`state` is not universal.** It moves to the PR-specific table. The field *name* is shared across resource types but the value domain is not — pull requests are `open|closed|merged`, issues would be `open|closed` — so it cannot be validated once for every resource. This ADR, ADR-000, `config/config.go`, and `query/filter.go` each held a different universal set; ADR-010 §5 settles it as `author`, `repo`, `provider`, `label`, `staleness_days`, `target_branch`.
+>
+> **`target_branch` is missing** from the universal table and belongs in it: `string`, substring match, no default. Note that the match is a literal case-insensitive substring — not a glob — so `"release/*"` matches nothing.
+>
+> **`state` has no default.** Omitting it matches all states, which is the "all PRs" baseline ADR-006 §7 already describes. `"draft"` is not a value; draft-ness is expressed only by the PR-specific `draft` bool, and `state = "open"` *includes* drafts. Because `""` already means "no filter", `open` and `merged` together is not expressible — an accepted cost recorded in ADR-010 §1.
+>
+> The `review_status` row is also incomplete as written: ADR-006 §1 includes `"review_required"`.
+
 **Sort orders (universal):** `updated` (default), `created`, `staleness`, `title`
 
 **Groupings:**
@@ -290,6 +300,7 @@ description = "PRs where I am a requested reviewer, non-draft only"
 
 [views.filter]
 reviewer = "me"   # "me" resolves to the authenticated user per provider
+state    = "open" # required for intent: without it the view spans closed and merged
 draft    = false
 
 [views.sort]
@@ -308,7 +319,8 @@ description = "All open PRs I authored, newest first"
 
 [views.filter]
 author = "me"
-state  = "open"  # "open" | "closed" | "merged" | "draft" — defaults to "open"
+state  = "open"  # "open" | "closed" | "merged" — no default; omit to match all states
+                 # "open" includes drafts; use draft = false to exclude them (ADR-010 §1)
 
 [views.sort]
 by        = "created"
@@ -396,5 +408,13 @@ prsm validates the decoded config before launching the TUI:
 6. **Duplicate provider names**: fail at startup — provider names are used as keys in the TUI and must be unique.
 7. **Duplicate view names**: fail at startup for the same reason.
 8. **Empty token after env var expansion**: fail at startup per provider, with the env var name in the message.
+
+> **Amended by ADR-010 §3.** A ninth rule is added:
+>
+> 9. **Unknown provider name in a filter**: fail at startup with: `view "my-reviews": filter.provider "githb" does not name a configured provider`. Every value in `filter.provider` must match a configured `[[providers]].name` exactly.
+>
+> This rule is what makes ADR-010 §3's decision — provider names compare case-sensitively everywhere — safe to demand. Without it, a typo or a casing mismatch produces a silently empty view rather than an error, which is the failure mode rules 3 through 5 exist to prevent. Rule 6 already collects provider names for its duplicate check, so the set is available at no additional cost.
+>
+> ADR-010 §1 also narrows rule 4's enum vocabulary for one key: `filter.state` accepts `open`, `closed`, `merged` — `draft` is no longer a state value, and draft-ness is expressed only by `filter.draft`. `filter.state` has no default; omitting it matches all states.
 
 All startup errors are printed to stderr before the TUI initializes, so they appear as plain text rather than inside a potentially-broken TUI frame.
