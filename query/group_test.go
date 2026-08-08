@@ -114,13 +114,14 @@ func TestGroupBy_ReviewStatus_TriagePriority(t *testing.T) {
 		prWithReviewState(model.AggregateReviewStateRequired),
 		prWithReviewState(model.AggregateReviewStateCommented),
 		prWithReviewState(model.AggregateReviewStateChangesRequested),
-		prWithReviewState(model.AggregateReviewStateNone), // empty string → "none"
+		prWithReviewState(model.AggregateReviewStateNone),
+		prWithReviewState(model.AggregateReviewStateUnknown), // never computed; its own bucket
 	}
 
 	groups := query.GroupBy(pullRequests, query.GroupSpec{By: query.GroupReviewStatus})
 
-	if len(groups) != 5 {
-		t.Fatalf("expected 5 groups, got %d", len(groups))
+	if len(groups) != 6 {
+		t.Fatalf("expected 6 groups, got %d", len(groups))
 	}
 
 	wantOrder := []string{
@@ -129,6 +130,7 @@ func TestGroupBy_ReviewStatus_TriagePriority(t *testing.T) {
 		string(model.AggregateReviewStateCommented),
 		string(model.AggregateReviewStateApproved),
 		"none",
+		"unknown",
 	}
 	for index, wantKey := range wantOrder {
 		if groups[index].Key != wantKey {

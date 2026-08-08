@@ -4,11 +4,21 @@ package model
 type CIState string
 
 const (
+	// CIStateUnknown is the zero value: no CI verdict has been established here.
+	// Distinct from CIStateNone, which is the answer "CI ran nowhere on this PR".
+	// A CIStatus reached through a Loaded LoadResult always carries a known state;
+	// this sentinel exists so a bare CIStatus literal cannot claim otherwise.
+	CIStateUnknown CIState = ""
 	CIStatePassing CIState = "passing"
 	CIStateFailing CIState = "failing"
 	CIStatePending CIState = "pending"
 	CIStateNone    CIState = "none" // no CI configured or checks not found
 )
+
+// IsKnown reports whether a CI verdict has been established. False for the zero value.
+func (ciState CIState) IsKnown() bool {
+	return ciState != CIStateUnknown
+}
 
 // CIStatus holds the overall CI result for the PR's head commit.
 // Wrapped in LoadResult because availability and fetch cost vary by provider.

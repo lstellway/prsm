@@ -17,6 +17,10 @@ const (
 	GroupReviewStatus GroupKey = "review_status" // PR-only: by Reviews.AggregateState
 )
 
+// groupKeyUnknown is the bucket for items whose group field has no value yet.
+// It is prsm's own bookkeeping surfacing in the view, not a state any provider reports.
+const groupKeyUnknown = "unknown"
+
 // GroupSpec describes a group operation.
 type GroupSpec struct {
 	By GroupKey
@@ -86,11 +90,12 @@ func groupKey(pullRequest model.PullRequest, groupBy GroupKey) string {
 	case GroupAuthor:
 		return pullRequest.Author.Username
 	case GroupReviewStatus:
-		state := string(pullRequest.Reviews.AggregateState)
-		if state == "" {
-			return "none"
+		// An uncomputed aggregate gets its own bucket. Folding it into "none" would
+		// tell the reader a PR has no reviews when prsm has not yet looked.
+		if !pullRequest.Reviews.AggregateState.IsKnown() {
+			return groupKeyUnknown
 		}
-		return state
+		return string(pullRequest.Reviews.AggregateState)
 	default:
 		return ""
 	}
@@ -125,9 +130,11 @@ func reviewStatusPriority(key string) int {
 		return 2
 	case string(model.AggregateReviewStateApproved):
 		return 3
-	case "none":
+	case string(model.AggregateReviewStateNone):
 		return 4
-	default:
+	case groupKeyUnknown:
 		return 5
+	default:
+		return 6
 	}
 }

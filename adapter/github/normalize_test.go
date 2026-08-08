@@ -170,6 +170,8 @@ func TestNormalizeAggregateState(t *testing.T) {
 		states []model.ReviewerState
 		want   model.AggregateReviewState
 	}{
+		// None, not Unknown: calling the function is what makes the answer known,
+		// and over an empty set the answer is "there are no reviews".
 		{"empty", nil, model.AggregateReviewStateNone},
 		{"single_approved", []model.ReviewerState{reviewerStateWith(model.ReviewDecisionApproved)}, model.AggregateReviewStateApproved},
 		{"single_pending", []model.ReviewerState{reviewerStateWith(model.ReviewDecisionPending)}, model.AggregateReviewStateRequired},
@@ -203,6 +205,32 @@ func TestNormalizeAggregateState(t *testing.T) {
 				t.Errorf("ComputeAggregateReviewState = %q, want %q", got, testCase.want)
 			}
 		})
+	}
+}
+
+// TestAggregateState_UnknownIsNotNone pins the distinction the two states exist to
+// make. Both describe a PR with no review activity to report, and before STE-100
+// they were the same value — so a PR whose reviews had never been fetched was
+// indistinguishable from one that had been checked and found to have none.
+func TestAggregateState_UnknownIsNotNone(t *testing.T) {
+	notFetched := normalizeReviewSummary(nil).AggregateState
+	if notFetched != model.AggregateReviewStateUnknown {
+		t.Errorf("list-time normalization with no reviewers = %q, want Unknown", notFetched)
+	}
+	if notFetched.IsKnown() {
+		t.Error("IsKnown() = true for a PR whose reviews were never fetched")
+	}
+
+	computed := model.ComputeAggregateReviewState(nil)
+	if computed != model.AggregateReviewStateNone {
+		t.Errorf("ComputeAggregateReviewState(nil) = %q, want None", computed)
+	}
+	if !computed.IsKnown() {
+		t.Error("IsKnown() = false for a computed aggregate")
+	}
+
+	if notFetched == computed {
+		t.Fatal("Unknown and None are the same value; the STE-100 collision is back")
 	}
 }
 
@@ -650,8 +678,11 @@ func TestNormalizePR(t *testing.T) {
 				if !got.Reviews.ReviewerStates.IsPending() {
 					t.Errorf("Reviews.ReviewerStates should be Pending")
 				}
-				if got.Reviews.AggregateState != model.AggregateReviewStateNone {
-					t.Errorf("AggregateState = %q, want None (no requested reviewers)", got.Reviews.AggregateState)
+				// Unknown, not None: GitHub's list response says nothing about
+				// reviews on a PR with no requested reviewers, so prsm has not
+				// established that there are none.
+				if got.Reviews.AggregateState != model.AggregateReviewStateUnknown {
+					t.Errorf("AggregateState = %q, want Unknown (reviews not fetched)", got.Reviews.AggregateState)
 				}
 			},
 		},
@@ -751,8 +782,8 @@ func TestNormalizePR(t *testing.T) {
 				if got.Reviews.RequestedReviewers != nil {
 					t.Errorf("RequestedReviewers should be nil, got %v", got.Reviews.RequestedReviewers)
 				}
-				if got.Reviews.AggregateState != model.AggregateReviewStateNone {
-					t.Errorf("AggregateState = %q, want None", got.Reviews.AggregateState)
+				if got.Reviews.AggregateState != model.AggregateReviewStateUnknown {
+					t.Errorf("AggregateState = %q, want Unknown (reviews not fetched)", got.Reviews.AggregateState)
 				}
 			},
 		},
@@ -825,8 +856,8 @@ func TestNormalizeReviewSummary(t *testing.T) {
 				if !got.ReviewerStates.IsPending() {
 					t.Errorf("ReviewerStates.IsPending() = false, want true")
 				}
-				if got.AggregateState != model.AggregateReviewStateNone {
-					t.Errorf("AggregateState = %q, want None", got.AggregateState)
+				if got.AggregateState != model.AggregateReviewStateUnknown {
+					t.Errorf("AggregateState = %q, want Unknown (reviews not fetched)", got.AggregateState)
 				}
 				if got.RequestedReviewers != nil {
 					t.Errorf("RequestedReviewers should be nil, got %v", got.RequestedReviewers)
@@ -840,8 +871,8 @@ func TestNormalizeReviewSummary(t *testing.T) {
 				if !got.ReviewerStates.IsPending() {
 					t.Errorf("ReviewerStates.IsPending() = false, want true")
 				}
-				if got.AggregateState != model.AggregateReviewStateNone {
-					t.Errorf("AggregateState = %q, want None", got.AggregateState)
+				if got.AggregateState != model.AggregateReviewStateUnknown {
+					t.Errorf("AggregateState = %q, want Unknown (reviews not fetched)", got.AggregateState)
 				}
 				if got.RequestedReviewers != nil {
 					t.Errorf("RequestedReviewers should be nil, got %v", got.RequestedReviewers)

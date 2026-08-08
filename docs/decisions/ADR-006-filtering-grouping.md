@@ -26,11 +26,11 @@ All filter and grouping expressions operate on the normalized `PullRequest` stru
 | `UpdatedAt` | time.Time | list-time | Last activity timestamp |
 | `Labels` | []Label | list-time | Name + color per label |
 | `Reviews.RequestedReviewers` | []ReviewerState | list-time | Identities of requested reviewers; supports `"me"` sentinel |
-| `Reviews.AggregateState` | AggregateReviewState enum | list-time (partial) | Derived from RequestedReviewers before ReviewerStates loads; becomes more accurate after lazy load |
+| `Reviews.AggregateState` | AggregateReviewState enum | list-time (partial) | Derived from RequestedReviewers before ReviewerStates loads; becomes more accurate after lazy load. Stays `Unknown` when neither input has produced an answer |
 | `Provider` | ProviderInstance | list-time | Kind, Host, Account — maps to provider name in config |
 | `Repo` | Repository | list-time | Owner + Name |
-| `CommentCount` | int | list-time | General comment count |
-| `Mergeable` | MergeableState | list-time | `mergeable`, `conflicting`, `unknown` |
+| `CommentCount` | LoadResult[int] | **varies by connection** | General comment count; GitHub's list endpoint omits it, GitLab and Gitea supply it |
+| `Mergeable` | LoadResult[MergeableState] | **varies by connection** | `mergeable`, `conflicting`; GitHub requires the detail endpoint, GitLab and Gitea supply it at list time |
 | `CI` | LoadResult[CIStatus] | **lazy** | Pending until secondary fetch completes; GitLab populates from list response |
 | `Reviews.ReviewerStates` | LoadResult[[]ReviewerState] | **lazy** | Full individual reviewer decisions after secondary fetch |
 | `Diff` | LoadResult[DiffStats] | **lazy** | Additions, deletions, changed files — requires detail endpoint |
@@ -103,7 +103,7 @@ The following filter fields are supported in v1. Most evaluate against list-time
 |---|---|---|---|
 | `author` | string or `"me"` | `Author.Username` | `"me"` resolved per provider at startup |
 | `reviewer` | string or `"me"` | `Reviews.RequestedReviewers[].Username` | Matches if any requested reviewer matches |
-| `review_status` | string enum | `Reviews.AggregateState` | `"approved"`, `"changes_requested"`, `"review_required"`, `"commented"`, `"none"` |
+| `review_status` | string enum | `Reviews.AggregateState` | `"approved"`, `"changes_requested"`, `"review_required"`, `"commented"`, `"none"` — a PR whose aggregate is still `Unknown` matches all of them, per ADR-010 §2(d) |
 | `state` | string enum | `State` | `"open"`, `"closed"`, `"merged"`, `"draft"` — default `"open"` |
 | `draft` | bool | `Draft` | `false` excludes drafts; `true` includes only drafts |
 | `label` | string or []string | `Labels[].Name` | AND-match: PR must carry all listed labels |
@@ -139,7 +139,11 @@ When a filter includes `ci_status` and a PR's `CI` field is `LoadStatePending`:
 
 This approach avoids false positives (Option B) and false negatives (Option A) during the load window. The "pop out" behavior (items disappearing when data arrives) is less disorienting than "pop in" because the item was already visible.
 
-The same behavior applies to `review_status` filtering when `Reviews.ReviewerStates` is `LoadStatePending`: the `AggregateState` derived from `RequestedReviewers` alone is used as the initial evaluation, with re-evaluation once the full reviewer states load. This works well because the RequestedReviewers-derived AggregateState is a conservative lower bound — it reliably identifies `"review_required"` PRs, which is the most important triage case.
+`review_status` filtering works differently, because `AggregateState` is not a `LoadResult` and carries its own unknown. When `Reviews.ReviewerStates` is `LoadStatePending`, the `AggregateState` derived from `RequestedReviewers` alone is used as the initial evaluation, with re-evaluation once the full reviewer states load. This works well because the RequestedReviewers-derived AggregateState is a conservative lower bound — it reliably identifies `"review_required"` PRs, which is the most important triage case.
+
+Where no answer has been derived at all, `AggregateState` is `Unknown` and the PR matches **every** `review_status` value, per ADR-010 §2(d)'s "unknown matches, known compares". It stays visible and drains out of the view as its data arrives, rather than being absent from a view that then looks confidently empty. Note that a *derived* `review_required` is known, so it compares: a PR already established to need review does not match `review_status = "approved"`.
+
+Unknown is not offered as a filter value: it is prsm's own bookkeeping, not a property of the PR a user would ask about. The state is separately visible in its own group (see Grouping below).
 
 > **Superseded by ADR-010 §2.** Option C stands as the choice, but it was scoped to CI and it was wrong about two things. It is now stated as one rule over `LoadState`, applied to *every* lazy field a filter depends on, and the consumer loads those fields before applying the filter rather than waiting for the cursor to walk past them.
 >
@@ -269,7 +273,7 @@ Universal grouping keys are valid for all resource types. PR-only keys (`review_
 **Group ordering:**
 - `repo` and `provider` groups are sorted alphabetically by group key.
 - `author` groups are sorted by PR count descending (most active author first).
-- `review_status` groups follow triage priority order: `review_required` → `changes_requested` → `commented` → `approved` → `none`. This order reflects urgency: what needs attention appears at the top.
+- `review_status` groups follow triage priority order: `review_required` → `changes_requested` → `commented` → `approved` → `none` → `unknown`. This order reflects urgency: what needs attention appears at the top. `unknown` is a distinct bucket for PRs whose aggregate has not been computed, and sorts last — folding it into `none` would tell the reader a PR has no reviews when prsm has not yet looked.
 
 **TOML syntax:**
 

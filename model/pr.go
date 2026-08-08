@@ -6,11 +6,21 @@ import "time"
 type PRState string
 
 const (
-	PRStateOpen   PRState = "open"
-	PRStateClosed PRState = "closed"
-	PRStateMerged PRState = "merged"
-	PRStateDraft  PRState = "draft" // open + draft; surfaced separately for triage filtering
+	// PRStateUnknown is the zero value: no lifecycle state has been assigned.
+	// Every adapter sets State during normalization, so a PullRequest in a snapshot
+	// should never hold it; the sentinel exists so a partial literal cannot pass
+	// itself off as open.
+	PRStateUnknown PRState = ""
+	PRStateOpen    PRState = "open"
+	PRStateClosed  PRState = "closed"
+	PRStateMerged  PRState = "merged"
+	PRStateDraft   PRState = "draft" // open + draft; surfaced separately for triage filtering
 )
+
+// IsKnown reports whether a lifecycle state has been assigned. False for the zero value.
+func (prState PRState) IsKnown() bool {
+	return prState != PRStateUnknown
+}
 
 // PullRequest is the normalized internal representation of a pull request or merge request
 // from any v1 provider. All display, filtering, sorting, and grouping operates on this type.
@@ -30,9 +40,14 @@ type PullRequest struct {
 	Body         string // PR description; may be empty
 
 	// State
-	State     PRState
-	Draft     bool           // true when the PR is a draft; set alongside PRStateDraft for providers that expose both
-	Mergeable MergeableState // zero value is MergeableStateUnknown
+	State PRState
+	Draft bool // true when the PR is a draft; set alongside PRStateDraft for providers that expose both
+
+	// Mergeable — availability varies by connection: GitLab and Gitea return it from
+	// the list response, GitHub requires the detail endpoint. Pending means prsm has
+	// not asked; Loaded(MergeableStateUnknown) means it asked and the provider is
+	// still computing.
+	Mergeable LoadResult[MergeableState]
 
 	// Participants
 	Author Author
@@ -43,9 +58,11 @@ type PullRequest struct {
 	// CI — lazy-loaded; GitLab may populate from the list response
 	CI LoadResult[CIStatus]
 
-	// CommentCount is the general discussion comment count, eagerly loaded from the list response.
-	// Does not include inline review comments.
-	CommentCount int
+	// CommentCount is the general discussion comment count, excluding inline review
+	// comments. Availability varies by connection — GitHub's list endpoint omits it —
+	// so it is wrapped: a bare int could not distinguish "no comments" from
+	// "not fetched", and unlike an enum it has no room for a sentinel.
+	CommentCount LoadResult[int]
 
 	// Diff — lazy-loaded from the PR detail endpoint
 	Diff LoadResult[DiffStats]
