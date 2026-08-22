@@ -1,6 +1,10 @@
 package config
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/lstellway/prsm/model"
+)
 
 // Config is the top-level structure for a prsm config file.
 type Config struct {
@@ -19,12 +23,12 @@ type Defaults struct {
 
 // ProviderConfig is one connection to a git hosting service.
 type ProviderConfig struct {
-	Name    string     `toml:"name"`
-	Type    string     `toml:"type"` // "github" | "gitlab" | "gitea"
-	BaseURL string     `toml:"base_url"`
-	Auth    AuthConfig `toml:"auth"`
-	Repos   []RepoRef  `toml:"repos"`
-	Groups  []GroupRef `toml:"groups"`
+	Name    string             `toml:"name"`
+	Type    model.ProviderKind `toml:"type"`
+	BaseURL string             `toml:"base_url"`
+	Auth    AuthConfig         `toml:"auth"`
+	Repos   []RepoRef          `toml:"repos"`
+	Groups  []GroupRef         `toml:"groups"`
 }
 
 // AuthConfig holds credentials for a provider.

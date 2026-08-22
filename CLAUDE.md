@@ -155,7 +155,7 @@ Decisions are tracked in GitHub Issues, not a docs directory.
 
 ## Current State
 
-**Nothing is wired end-to-end yet.** The layers below are built and tested in isolation; no production code path constructs an adapter or fetches a pull request. The assembly layer is the missing piece that connects them, and `prsm tui` currently prints "not yet implemented."
+**Not wired into any consumer yet.** The layers below are built and tested in isolation; the assembly layer now constructs adapters from config, but no consumer wires a constructed adapter into a running command yet — `prsm tui` still prints "not yet implemented."
 
 | Package | Status | Description |
 |---|---|---|
@@ -166,7 +166,8 @@ Decisions are tracked in GitHub Issues, not a docs directory.
 | `adapter/mock/` | Done | In-memory adapter for tests |
 | `config/` | Done | TOML loader, XDG path, full validation, first-run scaffold |
 | `query/` | Done | Filter, sort, group, fuzzy match, `Apply` pipeline — implemented and tested |
-| `client/` | Reserved | Reserved for the wire API's Go SDK. Currently holds config→adapter mappers awaiting the move to `package prsm` |
+| `prsm` (root) | Partial | Assembly layer — `New`/`NewWithConnections` construct connections from config and index them by resource-kind interface via type assertion, with typed `ConstructError`s and a `FailedProviders` accessor for partial failures. GitHub only; `gitlab`/`gitea` provider types produce a construction error until those adapters exist. Identity resolution, snapshot fetch, and the poll loop are not yet built |
+| `client/` | Reserved | Reserved for the wire API's Go SDK (`doc.go` only; no code yet) |
 | `internal/subcommand/` | Partial | cobra commands — `tui`, `serve`, `version`; `tui` and `serve` are not yet implemented |
 | `cmd/prsm/` | Done | Thin `main` delegating to `internal/subcommand` |
 | `api/proto/` | Stub | `prsm.v1` package declared; no services or RPCs defined, no codegen configured |
