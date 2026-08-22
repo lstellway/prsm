@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"github.com/lstellway/prsm/model"
 )
 
 // LoadFile decodes and validates a TOML config file. If path is empty the XDG
@@ -57,14 +58,14 @@ func validate(loadedConfig *Config, originalTokens, originalPasswords []string) 
 		if provider.Name == "" {
 			return fmt.Errorf("config: providers[%d]: name is required", index)
 		}
-		if provider.Type == "" {
+		if !provider.Type.IsKnown() {
 			return fmt.Errorf("config: provider %q: type is required", provider.Name)
 		}
 
 		// Rule 4: invalid enum for type.
-		validTypes := []string{"github", "gitlab", "gitea"}
+		validTypes := model.KnownProviderKinds()
 		if !sliceContains(validTypes, provider.Type) {
-			return fmt.Errorf("config: provider %q: type must be one of: %s", provider.Name, strings.Join(validTypes, ", "))
+			return fmt.Errorf("config: provider %q: type must be one of: %s", provider.Name, joinProviderKinds(validTypes))
 		}
 
 		// Rule 6: duplicate provider names.
@@ -213,11 +214,21 @@ func validate(loadedConfig *Config, originalTokens, originalPasswords []string) 
 	return nil
 }
 
-func sliceContains(candidates []string, target string) bool {
+func sliceContains[T comparable](candidates []T, target T) bool {
 	for _, candidate := range candidates {
 		if candidate == target {
 			return true
 		}
 	}
 	return false
+}
+
+// joinProviderKinds renders a validation error's list of acceptable provider
+// types, e.g. "github, gitlab, gitea".
+func joinProviderKinds(kinds []model.ProviderKind) string {
+	names := make([]string, len(kinds))
+	for index, kind := range kinds {
+		names[index] = string(kind)
+	}
+	return strings.Join(names, ", ")
 }

@@ -19,6 +19,14 @@ func (providerKind ProviderKind) IsKnown() bool {
 	return providerKind != ProviderUnknown
 }
 
+// KnownProviderKinds returns every ProviderKind this codebase recognizes, in
+// a fixed display order. config.LoadFile's enum validation reads from here
+// instead of maintaining its own copy of the vendor list; prsm.
+// constructConnection switches on the same named constants directly.
+func KnownProviderKinds() []ProviderKind {
+	return []ProviderKind{ProviderGitHub, ProviderGitLab, ProviderGitea}
+}
+
 // ProviderInstance identifies one configured account/server combination.
 // Multiple instances of the same kind are supported (e.g., github.com and github.example.com).
 type ProviderInstance struct {
