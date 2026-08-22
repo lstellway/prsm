@@ -102,6 +102,10 @@ This is a deliberate departure from common Go practice, which favors very short 
 
 `gofmt` is not optional. Run `gofmt -l .` before committing; it must print nothing.
 
+### Build
+
+Use `make build`, `make test`, `make lint` — they match what CI runs. A raw `go build ./...` (or `go install`) fails with `error obtaining VCS status: exit status 128` in a worktree checkout, because worktrees live as subdirectories of a bare repo here: Go's VCS stamping only recognizes a `.git` directory as a repo root, not a linked worktree's `.git` file, so it walks up to the enclosing bare directory and runs `git status` there, where it has no work tree. `make build` already passes `-buildvcs=false`; do the same for any raw `go build`/`go install` invocation. `go vet` and `go test` are unaffected.
+
 ## Providers (v1)
 
 Implementation order:
