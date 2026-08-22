@@ -13,11 +13,20 @@ jobs:
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version-file: go.mod
+      # gofmt is not optional (CLAUDE.md). Nothing checked this before STE-94;
+      # six files had already drifted by the time STE-73 found them.
+      - run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "$unformatted"
+            exit 1
+          fi
       - run: go vet ./...
       # Build-tagged files are invisible to a plain vet. Without this, the
       # integration tests can stop compiling and nothing notices — which is
       # exactly what happened to STE-59's AC1/AC4.
       - run: go vet -tags integration ./...
+      - run: go build ./...
       # -race is required for the concurrency tests to mean anything; the
       # GitHubAdapter.account race (STE-84) passes without it.
       - run: go test -race ./...

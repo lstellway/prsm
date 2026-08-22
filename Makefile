@@ -9,10 +9,18 @@ build:
 		-o prsm ./cmd/prsm
 
 test:
-	go test ./...
+	go test -race ./...
 
+# Mirrors the checks in .github/workflows/ci.yml, so a green `make lint`
+# means CI's gofmt/vet steps will be green too.
 lint:
+	@unformatted=$$(gofmt -l .); \
+	if [ -n "$$unformatted" ]; then \
+		echo "$$unformatted"; \
+		exit 1; \
+	fi
 	go vet ./...
+	go vet -tags integration ./...
 
 generate:
 	@echo "buf generate (not yet configured)"
