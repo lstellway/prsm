@@ -209,12 +209,11 @@ func TestCompile_ReviewStatus_None(t *testing.T) {
 	}
 }
 
-// TestCompile_ReviewStatus_UnknownMatchesEverything pins ADR-010 §2(d), "unknown
-// matches, known compares". An uncomputed aggregate stays visible and drains out of
-// the view as its data arrives. Excluding it instead would make approved,
-// changes_requested, commented and none match nothing at all in the shipping GitHub
-// adapter, which only ever derives review_required or nothing — ADR-010's own
-// Context §2, and the defect the ADR exists to remove.
+// TestCompile_ReviewStatus_UnknownMatchesEverything pins "unknown matches, known
+// compares": an uncomputed aggregate stays visible and drains out of the view as
+// its data arrives. Excluding it instead would make approved, changes_requested,
+// commented and none match nothing at all in the shipping GitHub adapter, which
+// only ever derives review_required or nothing.
 func TestCompile_ReviewStatus_UnknownMatchesEverything(t *testing.T) {
 	for _, status := range []string{"none", "approved", "changes_requested", "review_required", "commented"} {
 		t.Run(status, func(t *testing.T) {

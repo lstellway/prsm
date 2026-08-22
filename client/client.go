@@ -8,7 +8,7 @@ import (
 )
 
 // This is the assembly layer's single point of translation from config types to
-// adapter types (STE-68, ADR-008). The config layer's RepoRef and each vendor's
+// adapter types (STE-68). The config layer's RepoRef and each vendor's
 // own scope type are deliberately distinct so the adapter packages stay free of
 // any config import; the conversion cost of that separation is paid here and
 // nowhere else.
@@ -16,7 +16,7 @@ import (
 // There is no shared adapter-side repo reference to convert into. Scope is
 // vendor vocabulary — owner/repo pairs, project and group paths, job paths, a
 // filesystem root — so the conversion is per vendor and the destination type
-// belongs to the vendor package (STE-76, amending ADR-008 §5).
+// belongs to the vendor package (STE-76).
 
 // toScopeRefs converts config repo references into a vendor's own scope type,
 // preserving order. A nil input yields an empty, non-nil slice.

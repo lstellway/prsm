@@ -9,9 +9,9 @@ import (
 	"github.com/lstellway/prsm/config"
 )
 
-// adr005Example is the complete annotated example config from ADR-005.
+// annotatedExampleConfig is the complete annotated example config.
 // Env var references are resolved via os.Setenv in the test setup.
-const adr005Example = `
+const annotatedExampleConfig = `
 [defaults]
 refresh_interval_seconds = 60
 default_view = "my-reviews"
@@ -132,14 +132,14 @@ func writeTemp(t *testing.T, content string) string {
 	return path
 }
 
-// TestLoadFile_ADR005Example verifies the complete example from ADR-005 loads
-// and validates without error.
-func TestLoadFile_ADR005Example(t *testing.T) {
+// TestLoadFile_AnnotatedExampleConfig verifies the complete example config
+// loads and validates without error.
+func TestLoadFile_AnnotatedExampleConfig(t *testing.T) {
 	t.Setenv("PRSM_TEST_GITHUB_TOKEN", "ghp_fake")
 	t.Setenv("PRSM_TEST_GITLAB_TOKEN", "glpat_fake")
 	t.Setenv("PRSM_TEST_CODEBERG_TOKEN", "cb_fake")
 
-	loadedConfig, err := config.LoadFile(writeTemp(t, adr005Example))
+	loadedConfig, err := config.LoadFile(writeTemp(t, annotatedExampleConfig))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

@@ -52,11 +52,9 @@ Provider Adapters  →  Resource Model  →  Query Layer  →  Event Engine  →
 - **Provider Adapters** — one per vendor (GitHub, GitLab, Gitea/Forgejo, Jenkins, …, plus the local git checkout). Fetches raw data, normalizes it into the resource model, and reports what the specific connection can do. All vendor-specific knowledge lives here.
 - **Resource Model** — normalized Go types (`PullRequest`, `Issue`, …). `LoadResult[T]` for lazy-fetched fields. No presentation or transport concerns.
 - **Query Layer** — resource-typed `FilterSpec`, generic `Predicate[T]`, sort and group keys. Consumer-agnostic: TUI, MCP server, HTTP API, and library all use the same pipeline.
-- **Event Engine** — diffs successive snapshots into typed events and dispatches them to subscribers and shell hooks. Planned v1.1 (ADR-007).
-- **Assembly** — `package prsm` at the module root. Constructs adapters from config, resolves identities, fans out fetches, aggregates partial failures, and drives the poll cycle. Shared by every consumer; no consumer re-implements it (ADR-009).
+- **Event Engine** — diffs successive snapshots into typed events and dispatches them to subscribers and shell hooks. Planned v1.1.
+- **Assembly** — `package prsm` at the module root. Constructs adapters from config, resolves identities, fans out fetches, aggregates partial failures, and drives the poll cycle. Shared by every consumer; no consumer re-implements it.
 - **Consumers** — TUI (v1), MCP server, HTTP API, library. Each adds only transport or presentation. No consumer modifies the layers below it.
-
-See `docs/decisions/ADR-000-system-architecture.md` for the full specification and `ADR-009` for the assembly layer.
 
 ## Integration Surfaces
 
@@ -71,11 +69,9 @@ The module stays at v0.x until the TUI ships; both surfaces move to v1 together.
 
 - **Language:** Go
 - **TUI framework:** Bubble Tea v2 + Lip Gloss v2 (Charmbracelet)
-- **CLI framework:** `spf13/cobra` — see `docs/decisions/research/cli-framework.md`
+- **CLI framework:** `spf13/cobra`
 - **Config:** TOML via `github.com/BurntSushi/toml`
 - **Provider clients:** `google/go-github` (GitHub), `gitlab-org/api/client-go` (GitLab), `go-gitea/go-sdk` (Gitea/Forgejo)
-
-See `docs/decisions/ADR-001-tech-stack.md` for rationale.
 
 ## Code Conventions
 
@@ -114,7 +110,7 @@ Implementation order:
 2. **GitLab** (gitlab.com + self-hosted) — follows the same adapter interface
 3. **Gitea/Forgejo** — single adapter covering Gitea instances, Forgejo instances, and Codeberg
 
-Codeberg is a Forgejo instance and shares the Gitea adapter today. Forgejo forked from Gitea and their APIs are drifting; treat the shared adapter as current fact, not a permanent guarantee. See `docs/decisions/ADR-002-v1-providers.md`.
+Codeberg is a Forgejo instance and shares the Gitea adapter today. Forgejo forked from Gitea and their APIs are drifting; treat the shared adapter as current fact, not a permanent guarantee.
 
 ## Resource Types
 
@@ -130,7 +126,7 @@ That is the target, not the current state. The query layer is still concrete on 
 - **k9s** — TUI for Kubernetes; the gold standard for resource-oriented terminal UIs. Uses tview/tcell internally.
 - **lazygit** — 76k stars; proof that terminal-native developer tools achieve massive adoption via dotfiles/word-of-mouth. Design model for keybindings and multi-panel layout. Uses a custom gocui fork.
 - **herdr** — Rust/Ratatui terminal multiplexer for coding-agent CLIs. Relevant for its vendor model, not its domain: per-vendor behavior lives in declarative TOML manifests that ship independently of the binary behind an engine-version handshake, while vendor *identity* stays compiled. The fallback reference if prsm's capability tables ever outgrow the release cadence.
-- **lazyworktree** — Go + Bubble Tea TUI for managing git worktrees; surfaces CI/PR status per worktree. Closest reference for the v1 stack (ADR-001) and a working example of rendering CI/PR state in Bubble Tea.
+- **lazyworktree** — Go + Bubble Tea TUI for managing git worktrees; surfaces CI/PR status per worktree. Closest reference for the v1 stack and a working example of rendering CI/PR state in Bubble Tea.
 - **gitui** — 22k-star Rust/Ratatui git TUI; benchmark for speed on huge repos (Linux kernel in seconds) and keyboard-only, async-first navigation. Reference for the "speed as a constraint" principle and responsive async data loading.
 - **Superhuman** — proof that triage-as-a-product is a viable, high-value category. "Split inboxes," speed as a first-class constraint, attention routing as the core job.
 - The "PR inbox" mental model — prsm is an email client for pull requests: every item has a defined next action, sections surface priority signals before general triage.
@@ -151,40 +147,26 @@ That is the target, not the current state. The query layer is still concrete on 
 
 ## Decisions
 
-Key decisions are documented in `docs/decisions/`. Read the relevant ADR before implementing anything it covers.
-
-- [ADR-000: System Architecture](docs/decisions/ADR-000-system-architecture.md)
-- [ADR-001: Tech Stack](docs/decisions/ADR-001-tech-stack.md)
-- [ADR-002: v1 Provider Set](docs/decisions/ADR-002-v1-providers.md)
-- [ADR-003: Liveness Model](docs/decisions/ADR-003-liveness-model.md)
-- [ADR-004: PR Data Model](docs/decisions/ADR-004-pr-data-model.md)
-- [ADR-005: Config Format](docs/decisions/ADR-005-config-format.md)
-- [ADR-006: Filtering and Grouping](docs/decisions/ADR-006-filtering-grouping.md)
-- [ADR-007: Event Engine and Hook System](docs/decisions/ADR-007-event-engine.md)
-- [ADR-008: Adapter Constructor Inputs](docs/decisions/ADR-008-adapter-constructor-inputs.md)
-- [ADR-009: Assembly Layer and Library Surface](docs/decisions/ADR-009-assembly-layer-and-library-surface.md)
-- [ADR-010: Filter Semantics](docs/decisions/ADR-010-filter-semantics.md) — amends ADR-000, ADR-004, ADR-005, ADR-006, ADR-009
-
-Exploratory research that predates or supports these decisions lives in `docs/decisions/research/` — notably `cli-framework.md` (the cobra decision), `project-structure.md`, and the multi-resource query notes. It is not indexed above because it records investigation rather than accepted decisions.
+Decisions are tracked in GitHub Issues, not a docs directory.
 
 ## Current State
 
-**Nothing is wired end-to-end yet.** The layers below are built and tested in isolation; no production code path constructs an adapter or fetches a pull request. The assembly layer (ADR-009) is the missing piece that connects them, and `prsm tui` currently prints "not yet implemented."
+**Nothing is wired end-to-end yet.** The layers below are built and tested in isolation; no production code path constructs an adapter or fetches a pull request. The assembly layer is the missing piece that connects them, and `prsm tui` currently prints "not yet implemented."
 
 | Package | Status | Description |
 |---|---|---|
 | `model/` | Done | Normalized resource types — `PullRequest`, `LoadResult[T]`, reviews, CI, diff |
 | `adapter/` | Done | `Connection` base, `PullRequestSource`, optional `IdentityResolver`, error types. Scope types are vendor-local |
 | `adapter/github/` | Done | Full GitHub + GHE implementation — list, CI, reviews, diff, ETag caching, rate limiting |
-| `adapter/gitlab/`, `adapter/gitea/` | Stub | `Config` structs only (pattern set by ADR-008); no constructors yet |
+| `adapter/gitlab/`, `adapter/gitea/` | Stub | `Config` structs only; no constructors yet |
 | `adapter/mock/` | Done | In-memory adapter for tests |
-| `config/` | Done | TOML loader, XDG path, validation (all 8 ADR-005 rules), first-run scaffold |
+| `config/` | Done | TOML loader, XDG path, full validation, first-run scaffold |
 | `query/` | Done | Filter, sort, group, fuzzy match, `Apply` pipeline — implemented and tested |
-| `client/` | Reserved | Reserved for the wire API's Go SDK (ADR-009). Currently holds config→adapter mappers awaiting the move to `package prsm` |
+| `client/` | Reserved | Reserved for the wire API's Go SDK. Currently holds config→adapter mappers awaiting the move to `package prsm` |
 | `internal/subcommand/` | Partial | cobra commands — `tui`, `serve`, `version`; `tui` and `serve` are not yet implemented |
 | `cmd/prsm/` | Done | Thin `main` delegating to `internal/subcommand` |
 | `api/proto/` | Stub | `prsm.v1` package declared; no services or RPCs defined, no codegen configured |
-| `event/` | Stub | Event engine (planned v1.1 per ADR-007) |
+| `event/` | Stub | Event engine (planned v1.1) |
 | `internal/hook/` | Stub | Shell hook runner |
-| `internal/poller/` | Stub | Empty — poll loop belongs to the assembly layer per ADR-009; remove |
+| `internal/poller/` | Stub | Empty — poll loop belongs to the assembly layer; remove |
 | `internal/tui/` | Stub | Bubble Tea TUI consumer |

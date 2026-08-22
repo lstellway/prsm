@@ -51,7 +51,7 @@ type Group struct {
 }
 
 // GroupBy partitions pullRequests into named groups according to groupSpec, with each group's
-// items in their original relative order. Groups themselves are ordered per ADR-006:
+// items in their original relative order. Groups themselves are ordered:
 //   - repo/provider: alphabetical by key
 //   - author: descending by PR count
 //   - review_status: triage priority (review_required → changes_requested → commented → approved → none)

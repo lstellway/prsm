@@ -36,7 +36,7 @@ type Connection interface {
 
 // PullRequestSource is implemented by connections serving
 // model.ResourceKindPullRequest. Each method corresponds to one layer of the
-// lazy-fetch model from ADR-004.
+// lazy-fetch model.
 type PullRequestSource interface {
 	Connection
 

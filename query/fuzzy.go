@@ -41,7 +41,7 @@ func FuzzyMatch(pullRequests []model.PullRequest, query string) []model.PullRequ
 }
 
 // buildFuzzyTarget constructs the composite lowercase string that fuzzy matching runs against.
-// Composite field order follows ADR-006: Title, Author, Repo, Labels, Branches.
+// Composite field order: Title, Author, Repo, Labels, Branches.
 func buildFuzzyTarget(pullRequest model.PullRequest) string {
 	parts := make([]string, 0, 8+len(pullRequest.Labels))
 	parts = append(parts, pullRequest.Title, pullRequest.Author.Username)

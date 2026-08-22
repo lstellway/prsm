@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// TestResolveIdentityConcurrentWithInstance exercises the exact shape ADR-009's
+// TestResolveIdentityConcurrentWithInstance exercises the exact shape the
 // assembly layer produces: identity is resolved at startup while fetches that
 // stamp each resource with Instance() are already fanning out across providers.
 //
