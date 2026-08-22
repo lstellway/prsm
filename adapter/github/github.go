@@ -48,7 +48,7 @@ type GitHubAdapter struct {
 	repos        []RepoRef
 	rest         *gogithub.Client
 
-	// mutex guards state resolved after construction. ADR-009's assembly layer
+	// mutex guards state resolved after construction. The assembly layer
 	// resolves identity at startup while fetches are already fanning out, so
 	// ResolveIdentity and Instance genuinely run concurrently on one adapter.
 	// Holding Account outside instance avoids tearing the struct; it does not

@@ -47,4 +47,4 @@ flowchart TD
     Assembly --> Consumers
 ```
 
-See [`CLAUDE.md`](CLAUDE.md) for the full project overview and [`docs/decisions/`](docs/decisions/) for the architecture decision records behind each layer.
+See [`CLAUDE.md`](CLAUDE.md) for the full project overview.

@@ -10,8 +10,8 @@ import (
 
 // ResolvedIdentities maps provider instance name (ProviderInstance.Name) to the
 // authenticated user's identity on that instance. Keying by instance rather than
-// by ProviderKind is required by ADR-009 §5: several instances of one kind may be
-// configured with different logins, and keying by kind collapses them to one identity.
+// by ProviderKind avoids collapsing several instances of one kind, configured
+// with different logins, into a single identity.
 type ResolvedIdentities map[string]model.Author
 
 // BaseFilterSpec holds filter fields that apply to any resource type.
@@ -139,9 +139,9 @@ func matchesRequestedReviewer(reviewer string, resolvedMe ResolvedIdentities) Pr
 	}
 }
 
-// matchesAggregateReviewState implements ADR-010 §2(d), "unknown matches, known
-// compares". AggregateState is a bare enum rather than a LoadResult, so its unknown
-// is the zero value (§7) — this reads one field and never consults ReviewerStates.
+// matchesAggregateReviewState implements "unknown matches, known compares".
+// AggregateState is a bare enum rather than a LoadResult, so its unknown
+// is the zero value — this reads one field and never consults ReviewerStates.
 //
 // A derived review_required is known, so it compares: a PR already established to
 // need review does not match review_status = "approved".
@@ -230,9 +230,9 @@ func matchesTargetBranchSubstring(branch string) Predicate[model.PullRequest] {
 	}
 }
 
-// matchesCIState implements Option C from ADR-006: pending items pass through,
-// remaining visible until their CI data loads. LoadStateAbsent and LoadStateError
-// are treated as CIStateNone for filter evaluation.
+// matchesCIState lets pending items pass through, remaining visible until
+// their CI data loads. LoadStateAbsent and LoadStateError are treated as
+// CIStateNone for filter evaluation.
 func matchesCIState(status model.CIState) Predicate[model.PullRequest] {
 	return func(pullRequest model.PullRequest) bool {
 		if pullRequest.CI.IsPending() {

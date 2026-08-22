@@ -55,8 +55,7 @@ type ReviewerState struct {
 // The function is total: it returns a correct answer for any input, including nil
 // (AggregateReviewStateNone — computed, and there are no reviews). It never returns
 // AggregateReviewStateUnknown, because having been called is what makes the result
-// known. This is why AggregateState is not wrapped in LoadResult — see ADR-004
-// §Design notes → Unknown values.
+// known. This is why AggregateState is not wrapped in LoadResult.
 func ComputeAggregateReviewState(states []ReviewerState) AggregateReviewState {
 	if len(states) == 0 {
 		return AggregateReviewStateNone

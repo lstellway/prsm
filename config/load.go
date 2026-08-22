@@ -46,9 +46,8 @@ func LoadFile(path string) (*Config, error) {
 	return &loadedConfig, nil
 }
 
-// validate enforces all semantic rules defined in ADR-005 §"Validation and
-// error reporting at startup". The originalTokens/originalPasswords slices hold
-// the pre-expansion auth values indexed by provider position.
+// validate enforces all semantic validation rules. The originalTokens/originalPasswords
+// slices hold the pre-expansion auth values indexed by provider position.
 func validate(loadedConfig *Config, originalTokens, originalPasswords []string) error {
 	// ---- providers --------------------------------------------------------
 

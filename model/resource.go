@@ -18,7 +18,7 @@ const (
 	ResourceKindUnknown ResourceKind = ""
 
 	// ResourceKindPullRequest is the v1 resource kind. Its value matches the
-	// `resource = "pr"` config vocabulary of ADR-005 so the two never diverge.
+	// `resource = "pr"` config vocabulary so the two never diverge.
 	ResourceKindPullRequest ResourceKind = "pr"
 )
 

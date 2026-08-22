@@ -62,7 +62,7 @@ type ViewConfig struct {
 	Group       GroupConfig  `toml:"group"`
 }
 
-// FilterConfig holds all filterable fields for a view (ADR-006 §1).
+// FilterConfig holds all filterable fields for a view.
 // Universal fields apply to all resource types; PR-specific fields are only
 // valid when resource = "pr" and are rejected at load time otherwise.
 type FilterConfig struct {
