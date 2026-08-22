@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/BurntSushi/toml"
@@ -64,7 +65,7 @@ func validate(loadedConfig *Config, originalTokens, originalPasswords []string) 
 
 		// Rule 4: invalid enum for type.
 		validTypes := model.KnownProviderKinds()
-		if !sliceContains(validTypes, provider.Type) {
+		if !slices.Contains(validTypes, provider.Type) {
 			return fmt.Errorf("config: provider %q: type must be one of: %s", provider.Name, joinProviderKinds(validTypes))
 		}
 
@@ -98,7 +99,7 @@ func validate(loadedConfig *Config, originalTokens, originalPasswords []string) 
 		if provider.Auth.Type == "" {
 			return fmt.Errorf("config: provider %q: auth.type is required", provider.Name)
 		}
-		if !sliceContains(validAuthTypes, provider.Auth.Type) {
+		if !slices.Contains(validAuthTypes, provider.Auth.Type) {
 			return fmt.Errorf("config: provider %q: auth.type must be one of: %s", provider.Name, strings.Join(validAuthTypes, ", "))
 		}
 
@@ -134,7 +135,7 @@ func validate(loadedConfig *Config, originalTokens, originalPasswords []string) 
 
 		// Rule 4: invalid resource value.
 		validResources := []string{"pr", "issue"}
-		if !sliceContains(validResources, view.Resource) {
+		if !slices.Contains(validResources, view.Resource) {
 			return fmt.Errorf("config: view %q: resource must be one of: %s", view.Name, strings.Join(validResources, ", "))
 		}
 
@@ -147,14 +148,14 @@ func validate(loadedConfig *Config, originalTokens, originalPasswords []string) 
 		// Rule 4: invalid sort.by.
 		if view.Sort.By != "" {
 			validSortBy := []string{"updated", "created", "staleness", "title"}
-			if !sliceContains(validSortBy, view.Sort.By) {
+			if !slices.Contains(validSortBy, view.Sort.By) {
 				return fmt.Errorf("config: view %q: sort.by must be one of: %s", view.Name, strings.Join(validSortBy, ", "))
 			}
 		}
 
 		// Rule 4: invalid sort.direction.
 		if view.Sort.Direction != "" {
-			if !sliceContains([]string{"asc", "desc"}, view.Sort.Direction) {
+			if !slices.Contains([]string{"asc", "desc"}, view.Sort.Direction) {
 				return fmt.Errorf("config: view %q: sort.direction must be one of: asc, desc", view.Name)
 			}
 		}
@@ -162,7 +163,7 @@ func validate(loadedConfig *Config, originalTokens, originalPasswords []string) 
 		// Rule 4: invalid group.by.
 		if view.Group.By != "" {
 			validGroupBy := []string{"none", "repo", "provider", "author", "review_status"}
-			if !sliceContains(validGroupBy, view.Group.By) {
+			if !slices.Contains(validGroupBy, view.Group.By) {
 				return fmt.Errorf("config: view %q: group.by must be one of: %s", view.Name, strings.Join(validGroupBy, ", "))
 			}
 		}
@@ -170,7 +171,7 @@ func validate(loadedConfig *Config, originalTokens, originalPasswords []string) 
 		// Rule 4: invalid filter.state.
 		if view.Filter.State != "" {
 			validStates := []string{"open", "closed", "merged", "draft"}
-			if !sliceContains(validStates, view.Filter.State) {
+			if !slices.Contains(validStates, view.Filter.State) {
 				return fmt.Errorf("config: view %q: filter.state must be one of: %s", view.Name, strings.Join(validStates, ", "))
 			}
 		}
@@ -178,7 +179,7 @@ func validate(loadedConfig *Config, originalTokens, originalPasswords []string) 
 		// Rule 4: invalid filter.ci_status.
 		if view.Filter.CIStatus != "" {
 			validCIStatuses := []string{"passing", "failing", "pending", "none"}
-			if !sliceContains(validCIStatuses, view.Filter.CIStatus) {
+			if !slices.Contains(validCIStatuses, view.Filter.CIStatus) {
 				return fmt.Errorf("config: view %q: filter.ci_status must be one of: %s", view.Name, strings.Join(validCIStatuses, ", "))
 			}
 		}
@@ -186,7 +187,7 @@ func validate(loadedConfig *Config, originalTokens, originalPasswords []string) 
 		// Rule 4: invalid filter.review_status.
 		if view.Filter.ReviewStatus != "" {
 			validReviewStatuses := []string{"approved", "changes_requested", "review_required", "commented", "none"}
-			if !sliceContains(validReviewStatuses, view.Filter.ReviewStatus) {
+			if !slices.Contains(validReviewStatuses, view.Filter.ReviewStatus) {
 				return fmt.Errorf("config: view %q: filter.review_status must be one of: %s", view.Name, strings.Join(validReviewStatuses, ", "))
 			}
 		}
@@ -212,15 +213,6 @@ func validate(loadedConfig *Config, originalTokens, originalPasswords []string) 
 	}
 
 	return nil
-}
-
-func sliceContains[T comparable](candidates []T, target T) bool {
-	for _, candidate := range candidates {
-		if candidate == target {
-			return true
-		}
-	}
-	return false
 }
 
 // joinProviderKinds renders a validation error's list of acceptable provider
