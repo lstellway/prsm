@@ -4,7 +4,6 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/lstellway/prsm/adapter"
 	adaptergitea "github.com/lstellway/prsm/adapter/gitea"
 	adaptergithub "github.com/lstellway/prsm/adapter/github"
 	adaptergitlab "github.com/lstellway/prsm/adapter/gitlab"
@@ -42,7 +41,7 @@ func TestGitHubConfig(t *testing.T) {
 				Name:    "github-personal",
 				Token:   "ghp_token",
 				BaseURL: "https://ghe.example.com/api/v3",
-				Repos: []adapter.RepoRef{
+				Repos: []adaptergithub.RepoRef{
 					{Owner: "acme-corp", Repo: "api-service"},
 					{Owner: "acme-corp", Repo: "frontend"},
 				},
@@ -57,7 +56,7 @@ func TestGitHubConfig(t *testing.T) {
 			want: adaptergithub.Config{
 				Name:  "github-personal",
 				Token: "ghp_token",
-				Repos: []adapter.RepoRef{},
+				Repos: []adaptergithub.RepoRef{},
 			},
 		},
 		{
@@ -72,7 +71,7 @@ func TestGitHubConfig(t *testing.T) {
 			want: adaptergithub.Config{
 				Name:  "github-personal",
 				Token: "ghp_token",
-				Repos: []adapter.RepoRef{},
+				Repos: []adaptergithub.RepoRef{},
 			},
 		},
 		{
@@ -91,7 +90,7 @@ func TestGitHubConfig(t *testing.T) {
 			want: adaptergithub.Config{
 				Name:  "github-personal",
 				Token: "ghp_token",
-				Repos: []adapter.RepoRef{},
+				Repos: []adaptergithub.RepoRef{},
 			},
 		},
 	}
@@ -130,10 +129,10 @@ func TestGitLabConfig(t *testing.T) {
 				},
 			},
 			want: adaptergitlab.Config{
-				Name:    "gitlab-work",
-				Token:   "glpat_token",
-				BaseURL: "https://gitlab.internal.example.com",
-				Repos:   []adapter.RepoRef{{Owner: "platform", Repo: "gateway"}},
+				Name:     "gitlab-work",
+				Token:    "glpat_token",
+				BaseURL:  "https://gitlab.internal.example.com",
+				Projects: []adaptergitlab.ProjectRef{{Owner: "platform", Repo: "gateway"}},
 				Groups: []adaptergitlab.GroupRef{
 					{Path: "platform-team"},
 					{Path: "infra"},
@@ -148,10 +147,10 @@ func TestGitLabConfig(t *testing.T) {
 				Groups: []config.GroupRef{{Path: "platform-team"}},
 			},
 			want: adaptergitlab.Config{
-				Name:   "gitlab-work",
-				Token:  "glpat_token",
-				Repos:  []adapter.RepoRef{},
-				Groups: []adaptergitlab.GroupRef{{Path: "platform-team"}},
+				Name:     "gitlab-work",
+				Token:    "glpat_token",
+				Projects: []adaptergitlab.ProjectRef{},
+				Groups:   []adaptergitlab.GroupRef{{Path: "platform-team"}},
 			},
 		},
 		{
@@ -161,10 +160,10 @@ func TestGitLabConfig(t *testing.T) {
 				Auth: config.AuthConfig{Token: "glpat_token"},
 			},
 			want: adaptergitlab.Config{
-				Name:   "gitlab-work",
-				Token:  "glpat_token",
-				Repos:  []adapter.RepoRef{},
-				Groups: []adaptergitlab.GroupRef{},
+				Name:     "gitlab-work",
+				Token:    "glpat_token",
+				Projects: []adaptergitlab.ProjectRef{},
+				Groups:   []adaptergitlab.GroupRef{},
 			},
 		},
 	}
@@ -202,7 +201,7 @@ func TestGiteaConfig(t *testing.T) {
 				Name:    "codeberg",
 				Token:   "gitea_token",
 				BaseURL: "https://codeberg.org",
-				Repos:   []adapter.RepoRef{{Owner: "loganstellway", Repo: "public-project"}},
+				Repos:   []adaptergitea.RepoRef{{Owner: "loganstellway", Repo: "public-project"}},
 			},
 		},
 		{
@@ -221,7 +220,7 @@ func TestGiteaConfig(t *testing.T) {
 			want: adaptergitea.Config{
 				Name:     "gitea-self-hosted",
 				BaseURL:  "https://gitea.example.com",
-				Repos:    []adapter.RepoRef{},
+				Repos:    []adaptergitea.RepoRef{},
 				Username: "alice",
 				Password: "hunter2",
 			},
@@ -241,7 +240,7 @@ func TestGiteaConfig(t *testing.T) {
 			want: adaptergitea.Config{
 				Name:     "gitea-self-hosted",
 				Token:    "gitea_token",
-				Repos:    []adapter.RepoRef{},
+				Repos:    []adaptergitea.RepoRef{},
 				Username: "alice",
 				Password: "hunter2",
 			},
@@ -257,7 +256,7 @@ func TestGiteaConfig(t *testing.T) {
 			want: adaptergitea.Config{
 				Name:  "codeberg",
 				Token: "gitea_token",
-				Repos: []adapter.RepoRef{},
+				Repos: []adaptergitea.RepoRef{},
 			},
 		},
 	}
@@ -276,9 +275,14 @@ func TestGiteaConfig(t *testing.T) {
 // Cross-mapper invariants
 // ---------------------------------------------------------------------------
 
-// TestRepoRefMappingPreservesOrder guards the index-assignment loops shared by
+// TestScopeRefMappingPreservesOrder guards the index-assignment loop shared by
 // all three mappers: repo order is meaningful for polling and must round-trip.
-func TestRepoRefMappingPreservesOrder(t *testing.T) {
+//
+// Each mapper is asserted against its own vendor's scope type. There is no
+// shared want literal because there is no shared type: since STE-76, the three
+// destinations are distinct types that happen to hold the same two fields, and
+// a single literal spanning them is exactly what stopped being expressible.
+func TestScopeRefMappingPreservesOrder(t *testing.T) {
 	providerConfig := config.ProviderConfig{
 		Name: "p",
 		Auth: config.AuthConfig{Token: "t"},
@@ -288,20 +292,32 @@ func TestRepoRefMappingPreservesOrder(t *testing.T) {
 			{Owner: "o3", Repo: "r3"},
 		},
 	}
-	want := []adapter.RepoRef{
+
+	wantGitHub := []adaptergithub.RepoRef{
 		{Owner: "o1", Repo: "r1"},
 		{Owner: "o2", Repo: "r2"},
 		{Owner: "o3", Repo: "r3"},
 	}
+	if got := githubConfig(providerConfig).Repos; !reflect.DeepEqual(got, wantGitHub) {
+		t.Errorf("githubConfig().Repos = %+v, want %+v", got, wantGitHub)
+	}
 
-	if got := githubConfig(providerConfig).Repos; !reflect.DeepEqual(got, want) {
-		t.Errorf("githubConfig().Repos = %+v, want %+v", got, want)
+	wantGitLab := []adaptergitlab.ProjectRef{
+		{Owner: "o1", Repo: "r1"},
+		{Owner: "o2", Repo: "r2"},
+		{Owner: "o3", Repo: "r3"},
 	}
-	if got := gitlabConfig(providerConfig).Repos; !reflect.DeepEqual(got, want) {
-		t.Errorf("gitlabConfig().Repos = %+v, want %+v", got, want)
+	if got := gitlabConfig(providerConfig).Projects; !reflect.DeepEqual(got, wantGitLab) {
+		t.Errorf("gitlabConfig().Projects = %+v, want %+v", got, wantGitLab)
 	}
-	if got := giteaConfig(providerConfig).Repos; !reflect.DeepEqual(got, want) {
-		t.Errorf("giteaConfig().Repos = %+v, want %+v", got, want)
+
+	wantGitea := []adaptergitea.RepoRef{
+		{Owner: "o1", Repo: "r1"},
+		{Owner: "o2", Repo: "r2"},
+		{Owner: "o3", Repo: "r3"},
+	}
+	if got := giteaConfig(providerConfig).Repos; !reflect.DeepEqual(got, wantGitea) {
+		t.Errorf("giteaConfig().Repos = %+v, want %+v", got, wantGitea)
 	}
 }
 

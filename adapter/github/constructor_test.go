@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	gogithub "github.com/google/go-github/v88/github"
-	"github.com/lstellway/prsm/adapter"
 	"github.com/lstellway/prsm/model"
 )
 
@@ -221,7 +220,7 @@ func TestListRepoPRsPagination(t *testing.T) {
 				Kind: model.ProviderGitHub,
 				Host: "localhost",
 			},
-			repos: []adapter.RepoRef{{Owner: "owner", Repo: "repo"}},
+			repos: []RepoRef{{Owner: "owner", Repo: "repo"}},
 			rest:  restClient,
 		}
 
@@ -266,7 +265,7 @@ func TestListRepoPRsPagination(t *testing.T) {
 				Kind: model.ProviderGitHub,
 				Host: "localhost",
 			},
-			repos: []adapter.RepoRef{{Owner: "owner", Repo: "repo"}},
+			repos: []RepoRef{{Owner: "owner", Repo: "repo"}},
 			rest:  restClient,
 		}
 

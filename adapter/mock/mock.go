@@ -1,3 +1,10 @@
+// Package mock provides in-memory adapter implementations for tests.
+//
+// The types here mirror the adapter interfaces one-for-one and compose by
+// embedding, so a test builds a connection serving exactly the resource kinds
+// it means to exercise — including none. A single struct implementing every
+// method could not express a source that does not serve pull requests, which is
+// the case the split exists to represent.
 package mock
 
 import (
@@ -7,11 +14,22 @@ import (
 	"github.com/lstellway/prsm/model"
 )
 
-// MockAdapter is a configurable ProviderAdapter for use in tests.
-// Set the appropriate fields to control return values.
-type MockAdapter struct {
-	KindVal           model.ProviderKind
-	InstanceVal       model.ProviderInstance
+// Connection is a source that names its instance and serves nothing else. Use
+// it alone to stand in for a connection with no credential and no resource
+// kinds, or embed it in a larger mock.
+type Connection struct {
+	InstanceVal model.ProviderInstance
+}
+
+func (mockConnection *Connection) Instance() model.ProviderInstance {
+	return mockConnection.InstanceVal
+}
+
+// PullRequestSource is a Connection that serves pull requests. Set the
+// appropriate fields to control return values.
+type PullRequestSource struct {
+	Connection
+
 	PullRequests      []model.PullRequest
 	PullRequestsErr   error
 	CIStatus          model.CIStatus
@@ -20,32 +38,47 @@ type MockAdapter struct {
 	ReviewerStatesErr error
 	DiffStats         model.DiffStats
 	DiffErr           error
-	Identity          model.Identity
-	IdentityErr       error
 }
 
-var _ adapter.ProviderAdapter = &MockAdapter{}
-
-func (mockAdapter *MockAdapter) Kind() model.ProviderKind { return mockAdapter.KindVal }
-
-func (mockAdapter *MockAdapter) Instance() model.ProviderInstance { return mockAdapter.InstanceVal }
-
-func (mockAdapter *MockAdapter) ListPullRequests(_ context.Context) ([]model.PullRequest, error) {
-	return mockAdapter.PullRequests, mockAdapter.PullRequestsErr
+func (mockSource *PullRequestSource) ListPullRequests(_ context.Context) ([]model.PullRequest, error) {
+	return mockSource.PullRequests, mockSource.PullRequestsErr
 }
 
-func (mockAdapter *MockAdapter) LoadCI(_ context.Context, _ model.PullRequest) (model.CIStatus, error) {
-	return mockAdapter.CIStatus, mockAdapter.CIErr
+func (mockSource *PullRequestSource) LoadCI(_ context.Context, _ model.PullRequest) (model.CIStatus, error) {
+	return mockSource.CIStatus, mockSource.CIErr
 }
 
-func (mockAdapter *MockAdapter) LoadReviewerStates(_ context.Context, _ model.PullRequest) ([]model.ReviewerState, error) {
-	return mockAdapter.ReviewerStates, mockAdapter.ReviewerStatesErr
+func (mockSource *PullRequestSource) LoadReviewerStates(_ context.Context, _ model.PullRequest) ([]model.ReviewerState, error) {
+	return mockSource.ReviewerStates, mockSource.ReviewerStatesErr
 }
 
-func (mockAdapter *MockAdapter) LoadDiff(_ context.Context, _ model.PullRequest) (model.DiffStats, error) {
-	return mockAdapter.DiffStats, mockAdapter.DiffErr
+func (mockSource *PullRequestSource) LoadDiff(_ context.Context, _ model.PullRequest) (model.DiffStats, error) {
+	return mockSource.DiffStats, mockSource.DiffErr
 }
 
-func (mockAdapter *MockAdapter) ResolveIdentity(_ context.Context) (model.Identity, error) {
-	return mockAdapter.Identity, mockAdapter.IdentityErr
+// IdentityResolver resolves an identity. It carries no Connection of its own so
+// that it composes with any source; embed it beside one.
+type IdentityResolver struct {
+	Identity    model.Identity
+	IdentityErr error
 }
+
+func (mockResolver *IdentityResolver) ResolveIdentity(_ context.Context) (model.Identity, error) {
+	return mockResolver.Identity, mockResolver.IdentityErr
+}
+
+// Adapter is a connection serving every kind this package mocks — a credentialed
+// pull request source, the shape the GitHub adapter has. Tests that do not care
+// about the resource-kind split should use this one.
+type Adapter struct {
+	PullRequestSource
+	IdentityResolver
+}
+
+var (
+	_ adapter.Connection        = (*Connection)(nil)
+	_ adapter.PullRequestSource = (*PullRequestSource)(nil)
+	_ adapter.IdentityResolver  = (*IdentityResolver)(nil)
+	_ adapter.PullRequestSource = (*Adapter)(nil)
+	_ adapter.IdentityResolver  = (*Adapter)(nil)
+)

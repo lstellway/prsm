@@ -42,6 +42,32 @@ prsm is organized into five layers with strict boundaries:
 
 Each provider (GitHub, GitLab, Gitea/Forgejo) implements a `ProviderAdapter` interface. The adapter's job is narrow: authenticate, fetch raw API responses, and normalize them into the resource model. Adapters carry no presentation or query logic.
 
+> **Amended by STE-76.** The adapter's job is unchanged; the single interface is gone. `ProviderAdapter` is replaced by a base every source satisfies plus one interface per resource kind:
+>
+> ```go
+> type Connection interface {                 // required; nothing else is
+>     Instance() model.ProviderInstance
+> }
+>
+> type PullRequestSource interface {          // one per model.ResourceKind
+>     Connection
+>     ListPullRequests(ctx context.Context) ([]model.PullRequest, error)
+>     LoadCI(ctx context.Context, pullRequest model.PullRequest) (model.CIStatus, error)
+>     LoadReviewerStates(ctx context.Context, pullRequest model.PullRequest) ([]model.ReviewerState, error)
+>     LoadDiff(ctx context.Context, pullRequest model.PullRequest) (model.DiffStats, error)
+> }
+>
+> type IdentityResolver interface {           // optional
+>     ResolveIdentity(ctx context.Context) (model.Identity, error)
+> }
+> ```
+>
+> **Why the split.** "One adapter per provider kind" below assumes every source answers for every resource kind. It does not: Jenkins and CircleCI serve CI runs and no pull requests, and the local git checkout serves branches and worktrees with no host and no credential. Under one fat interface those sources implement stubs that return errors — reporting a permanent structural fact as a runtime failure, which is precisely what "honest about what it can't do" forbids. Interface assertion reports the same fact at construction, and there is no stub to write.
+>
+> **Why identity is optional.** A required identity method makes a credential-less source structurally unrepresentable. Three states stay distinct for the assembly layer, and collapsing the first two would render a local checkout as a permanently broken connection: not implemented (healthy, contributes no `"me"`), implemented and failed (bad credential), implemented and resolved.
+>
+> **What is not decided here.** No capability method sits on the base — capability is a per-connection fact and belongs to the capability model ADR. The lazy-load methods still take a whole `model.PullRequest`; replacing that with an opaque routing reference is the assembly layer's snapshot work.
+
 - One adapter per provider kind; a `ProviderInstance` config (host + credentials) instantiates a concrete adapter.
 - Adapters return `[]PullRequest`, `[]Issue`, etc. — not raw API responses.
 - Lazy-loaded fields (`LoadResult[T]`) are fetched by the adapter on demand, not eagerly.

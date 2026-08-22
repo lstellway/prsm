@@ -9,7 +9,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/lstellway/prsm/adapter"
 	"github.com/lstellway/prsm/model"
 )
 
@@ -111,7 +110,7 @@ func TestListPullRequestsETagRevalidation(t *testing.T) {
 		Name:    "test",
 		Token:   "fake-token",
 		BaseURL: server.URL,
-		Repos:   []adapter.RepoRef{{Owner: "owner", Repo: "repo"}},
+		Repos:   []RepoRef{{Owner: "owner", Repo: "repo"}},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)
