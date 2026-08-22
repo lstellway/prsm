@@ -1,4 +1,4 @@
-package client
+package prsm
 
 import (
 	"reflect"
@@ -11,7 +11,7 @@ import (
 )
 
 // These tests pin the config.ProviderConfig -> adapter Config mapping that keeps
-// the adapter packages free of any config import (STE-68). They are the only
+// the adapter packages free of any config import. They are the only
 // place the field-by-field correspondence is asserted, so a field added to
 // config.ProviderConfig and forgotten here shows up as a mapping gap.
 
@@ -279,9 +279,9 @@ func TestGiteaConfig(t *testing.T) {
 // all three mappers: repo order is meaningful for polling and must round-trip.
 //
 // Each mapper is asserted against its own vendor's scope type. There is no
-// shared want literal because there is no shared type: since STE-76, the three
+// shared want literal because there is no shared type: the three
 // destinations are distinct types that happen to hold the same two fields, and
-// a single literal spanning them is exactly what stopped being expressible.
+// a single literal spanning them is not expressible.
 func TestScopeRefMappingPreservesOrder(t *testing.T) {
 	providerConfig := config.ProviderConfig{
 		Name: "p",
