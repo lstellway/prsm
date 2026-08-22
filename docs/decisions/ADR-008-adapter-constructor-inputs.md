@@ -42,6 +42,12 @@ Placing the mapping in `config/` rather than the assembly layer was also rejecte
 
 5. **Boundary rule for the shared `adapter` package**: it holds the `ProviderAdapter` interface and types universal to all providers. Provider-specific reference types live in that provider's package. Accordingly `adapter.RepoRef` is shared — every provider polls owner/repo pairs — while `GroupRef` is GitLab-only and lives in `adapter/gitlab`.
 
+   > **Amended by STE-76.** The boundary rule stands; the example inverts. `adapter.RepoRef` is deleted and scope types are vendor-local — `github.RepoRef`, `gitea.RepoRef`, and `gitlab.ProjectRef` beside the existing `GroupRef`.
+   >
+   > The premise "every provider polls owner/repo pairs" is false. Jenkins polls job paths, CircleCI polls project slugs, and a local git checkout polls a filesystem root with no owner and no host at all (CLAUDE.md, "Multi-vendor, sparse by nature"). `gitlab.GroupRef` was the correct general case — scope is vendor vocabulary — and was mislabeled here as the exception.
+   >
+   > The shared package no longer holds a `ProviderAdapter` interface either; see the amendment to ADR-000 § Layer 1.
+
 6. **Constructors validate their own preconditions.** `config/` validation at load time does not cover adapters constructed directly by library or MCP consumers, so this is deliberate defence-in-depth rather than redundancy. Validation belongs in `New()`; there is no separate `Validate()` method, which would create a "must I call this?" ambiguity and a second path that can drift.
 
 7. **Adapter errors use adapter vocabulary, not config-file vocabulary.** `New()` reports `token is required`, not `auth.token is required` — the TOML key path is the config layer's to name when it wraps the error.
@@ -59,6 +65,8 @@ Placing the mapping in `config/` rather than the assembly layer was also rejecte
 
 - **N mapping functions to maintain**, one per provider, in the assembly layer.
 - **`adapter.RepoRef` deliberately duplicates `config.RepoRef`.** The two are permitted to diverge; converting between them is the unavoidable tax of the layering rule. It is paid once, in the assembly layer's `toRepoRefs`.
+
+  > **Amended by STE-76.** Now duplicated once per vendor rather than once in total: `config.RepoRef` converts into `github.RepoRef`, `gitea.RepoRef`, or `gitlab.ProjectRef`. The tax rose from one conversion to three, all of them still in the assembly layer, and that is the price of each vendor owning the shape of its own scope — which the GitLab adapter will need when it decides whether a project is an owner/name pair or a namespace path.
 - **Config-to-adapter drift is not compiler-checked.** A field added to `config.ProviderConfig` and mapped nowhere compiles and ships silently. Mapping tests in the assembly layer are therefore a required mitigation, not optional: they are the only place the field-by-field correspondence is asserted.
 - **Provider-incompatible config fields drop silently.** `config.ProviderConfig` is a union and `config/load.go` does not validate type-to-field compatibility, so `[[providers.groups]]` under a `type = "github"` provider yields a clean startup and an empty result set with no diagnostic. Validating that compatibility in `config/load.go` is a follow-up obligation of this decision.
 - **`Auth.Type` is currently carried by no mapper.** `config/` validates `auth.type` against `pat | oauth | basic`, but the adapter `Config` types re-derive auth mode from which credential fields are populated. Reconciling the declared auth type with the derived one is a follow-up, and must be resolved when the Gitea adapter lands, since Gitea is the only provider with two auth modes.

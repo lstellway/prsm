@@ -8,8 +8,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"github.com/lstellway/prsm/adapter"
 )
 
 // TestResolveIdentityConcurrentWithInstance exercises the exact shape ADR-009's
@@ -53,7 +51,7 @@ func TestResolveIdentityConcurrentWithInstance(t *testing.T) {
 		Name:    "test",
 		Token:   "fake-token",
 		BaseURL: server.URL,
-		Repos:   []adapter.RepoRef{{Owner: "owner", Repo: "repo"}},
+		Repos:   []RepoRef{{Owner: "owner", Repo: "repo"}},
 	})
 	if err != nil {
 		t.Fatalf("New: %v", err)

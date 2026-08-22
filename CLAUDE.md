@@ -13,15 +13,37 @@ v1 ships the pull-request slice; see Non-Goals.
 - **Resource aggregation API** — prsm's core is a vendor-agnostic resource aggregation layer. Adapters normalize data from many vendors — git hosts, CI systems, the local checkout — into a unified schema. The query layer (filter, sort, group) operates on that schema. Consumers compose the model and query layers without modification.
 - **TUI as first consumer, not product identity** — the terminal UI is prsm's first consumer. MCP server, HTTP API, and library distribution are first-class planned consumers, not afterthoughts. Build the resource model and query layer as if all consumers exist simultaneously.
 - **Manage, don't just watch** — every resource prsm shows, it can act on: merge, comment, label, request review, rerun, check out, close. You should not need the vendor's web UI for the routine loop.
-- **Honest about what it can't do** — capability is a property of a *connection*, not a vendor: the same Gitea at 1.19 and 1.24 answer differently. prsm probes each connection and says explicitly what is unavailable and why. Never a silent no-op, never a dead keystroke. Review authoring is the known permanent gap — GitHub reviews carry a body and a request-changes state, GitLab approvals carry neither — and prsm links out rather than pretending otherwise.
+- **Honest about what it can't do** — never a silent no-op, never a dead keystroke; prsm says what is unavailable and why. Review authoring is the known permanent gap — GitHub reviews carry a body and a request-changes state, GitLab approvals carry neither — and prsm links out rather than pretending otherwise. The mechanism is below, under *Vendors, connections, and resource kinds*.
 - **Generic schema** — normalize data from all vendors into one internal model; views are vendor-agnostic.
-- **Multi-vendor, sparse by nature** — a vendor serves some resource kinds and not others. Jenkins and CircleCI have CI runs but no pull requests; the local git checkout has branches and worktrees but no host and no credential. Parity is a commitment *per resource kind* — if prsm supports pull requests on two vendors it supports them equivalently — not a claim that every vendor serves everything.
+- **Multi-vendor, sparse by nature** — parity is a commitment *per resource kind*: if prsm supports pull requests on two vendors it supports them equivalently. It is not a claim that every vendor serves every kind. See *Vendors, connections, and resource kinds*.
 - **Vendors are built in** — adapters compile into prsm, one per vendor. No plugin runtime. Every comparable tool that reached broad vendor coverage *with writes* did it this way (Renovate: 11 code hosts; rclone: ~70 backends). Third parties extend prsm through the wire API and config-declared shell-out actions, not by shipping vendors.
 - **Triage-oriented** — inspired by medical triage: what needs attention, what's urgent, what's blocked.
 
+## Vendors, connections, and resource kinds
+
+One question drives the design: *can this source answer for this resource kind?* It has two answers, knowable at different times, needing different machinery. Do not collapse them.
+
+**Axis 1 — does this source serve this kind at all?** Structural, settled at compile time. One Go interface per resource kind — `adapter.PullRequestSource` today, one more per kind added later. Jenkins serves CI runs and no pull requests, so it does not implement `PullRequestSource`, and the assembly layer never asks it. There is no stub returning "unsupported": a permanent structural fact must not be reported as a runtime failure. Assembly discovers what a connection serves by type assertion at construction.
+
+**Axis 2 — for a kind it does serve, what can *this connection* do?** Runtime, knowable only by probing. The same Gitea at 1.19 and 1.24 answer differently; a read-scoped token and a write-scoped token answer differently. This is a capability set carried by the connection, plus a typed error carrying a reason.
+
+Three kinds of "no" follow, and they must stay distinguishable end to end:
+
+| | Mechanism | What the user sees |
+|---|---|---|
+| Not served | no interface — compile time | prsm never offers it |
+| Served, this connection cannot | capability + typed reason | offered but disabled, with the reason |
+| Served, capable, failed this time | ordinary error | offered, attempted, reported broken |
+
+**Vocabulary.** A **vendor** is the product (GitHub). A **connection** is one configured endpoint plus a credential. A **source** is anything that serves resources — a connection, or the local git checkout, which has no host, no credential, and no account. A **resource kind** is `PullRequest`, `Action`, `Branch`, `Worktree`, `Issue`.
+
+Because a source may have neither host nor credential, `adapter.Connection` requires only that a source name itself. Everything beyond that — identity included — is an interface a source may decline to implement, and declining is never a failure.
+
+Axis 1 is implemented in `adapter/adapter.go`. Axis 2 is not built yet.
+
 ## Architecture
 
-Five layers with strict downward-only dependencies, plus a shared assembly layer between them and the consumers:
+Layers with strict downward-only dependencies, plus a shared assembly layer between them and the consumers:
 
 ```
 Provider Adapters  →  Resource Model  →  Query Layer  →  Event Engine  →  Assembly  →  Consumers
@@ -76,7 +98,7 @@ This is a deliberate departure from common Go practice, which favors very short 
 - Standard-library conventions where the signature is fixed by an interface, e.g. `t *testing.T`
 - Receiver-free single-expression math where a letter *is* the domain term (rare; prefer a word)
 
-**Watch for package-name collisions.** A descriptive name can shadow an imported package. `adapter` is the obvious trap — `github.com/lstellway/prsm/adapter` is imported by every adapter file, so a receiver or local named `adapter` makes `adapter.RepoRef` and `adapter.RateLimitError` unreachable in that scope. Same for `config`, `model`, `query`, `event`. Name for the concrete type instead (`githubAdapter`), or for the role (`provider`).
+**Watch for package-name collisions.** A descriptive name can shadow an imported package. `adapter` is the obvious trap — `github.com/lstellway/prsm/adapter` is imported by every adapter file, so a receiver or local named `adapter` makes `adapter.PullRequestSource` and `adapter.RateLimitError` unreachable in that scope. Same for `config`, `model`, `query`, `event`. Name for the concrete type instead (`githubAdapter`), or for the role (`provider`).
 
 `adapter/github/github.go` is the reference implementation of this convention.
 
@@ -152,7 +174,7 @@ Exploratory research that predates or supports these decisions lives in `docs/de
 | Package | Status | Description |
 |---|---|---|
 | `model/` | Done | Normalized resource types — `PullRequest`, `LoadResult[T]`, reviews, CI, diff |
-| `adapter/` | Done | `ProviderAdapter` interface, shared `RepoRef`, error types |
+| `adapter/` | Done | `Connection` base, `PullRequestSource`, optional `IdentityResolver`, error types. Scope types are vendor-local |
 | `adapter/github/` | Done | Full GitHub + GHE implementation — list, CI, reviews, diff, ETag caching, rate limiting |
 | `adapter/gitlab/`, `adapter/gitea/` | Stub | `Config` structs only (pattern set by ADR-008); no constructors yet |
 | `adapter/mock/` | Done | In-memory adapter for tests |

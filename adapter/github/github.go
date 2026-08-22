@@ -16,11 +16,19 @@ import (
 	"sync"
 
 	gogithub "github.com/google/go-github/v88/github"
-	"github.com/lstellway/prsm/adapter"
 	"github.com/lstellway/prsm/model"
 )
 
 const defaultAPIBaseURL = "https://api.github.com"
+
+// RepoRef identifies a repository to poll. Owner/repo pairs are GitHub's own
+// addressing vocabulary, so the type lives here rather than in the shared
+// adapter package: a Jenkins connection polls job paths and a local checkout
+// polls a filesystem root, and neither is expressible in these two fields.
+type RepoRef struct {
+	Owner string
+	Repo  string
+}
 
 // Config holds the parameters needed to construct a GitHubAdapter.
 // The assembly layer maps config.ProviderConfig into this type so the adapter
@@ -29,7 +37,7 @@ type Config struct {
 	Name    string
 	Token   string
 	BaseURL string
-	Repos   []adapter.RepoRef
+	Repos   []RepoRef
 }
 
 // GitHubAdapter is the prsm provider adapter for GitHub.
@@ -37,7 +45,7 @@ type Config struct {
 type GitHubAdapter struct {
 	providerName string
 	instance     model.ProviderInstance // immutable after New(); Account is excluded
-	repos        []adapter.RepoRef
+	repos        []RepoRef
 	rest         *gogithub.Client
 
 	// mutex guards state resolved after construction. ADR-009's assembly layer
@@ -95,9 +103,6 @@ func New(adapterConfig Config) (*GitHubAdapter, error) {
 		rest:  restClient,
 	}, nil
 }
-
-// Kind returns the provider kind for this adapter instance.
-func (githubAdapter *GitHubAdapter) Kind() model.ProviderKind { return model.ProviderGitHub }
 
 // Instance returns the full ProviderInstance this adapter serves.
 // Account is composed at call time under the read lock, so callers always see

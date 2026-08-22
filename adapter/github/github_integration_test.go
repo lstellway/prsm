@@ -13,7 +13,6 @@ import (
 	"os"
 	"testing"
 
-	"github.com/lstellway/prsm/adapter"
 	githubadapter "github.com/lstellway/prsm/adapter/github"
 	"github.com/lstellway/prsm/model"
 )
@@ -35,7 +34,7 @@ func newTestAdapter(t *testing.T) *githubadapter.GitHubAdapter {
 		Name:  "github-integration-test",
 		Token: token,
 		// Use a known public repo for the integration test.
-		Repos: []adapter.RepoRef{
+		Repos: []githubadapter.RepoRef{
 			{Owner: "golang", Repo: "go"},
 		},
 	}

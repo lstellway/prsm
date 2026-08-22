@@ -98,6 +98,20 @@ A fetch returns a snapshot carrying both the pull requests and per-provider stat
 
 **A provider that fails is never fatal.** If a provider's identity cannot be resolved or its fetch fails, it is marked offline and the remaining providers serve normally. `"me"` matches nothing on an unavailable provider until it recovers. prsm does not refuse to start because one configured provider is unreachable — a single expired token on a secondary provider must not block the tool. Consumers are responsible for making degraded state visible, since "no PRs from this provider" and "this provider is unreachable" must not look alike.
 
+> **Amended by STE-76.** The paragraph above, and the Context bullet at § "What assembly actually involves" that reads "calling `ResolveIdentity` on each adapter," both assume every adapter resolves an identity. A hostless, credential-less source is therefore offline by construction under the text as written — a spec bug, not an implementation detail, since CLAUDE.md admits exactly such a source.
+>
+> `ResolveIdentity` now lives on the optional `adapter.IdentityResolver` (ADR-000 § Layer 1). Assembly asserts for it and distinguishes **three** states, not two:
+>
+> | Connection | Meaning | Provider state |
+> |---|---|---|
+> | Does not implement `IdentityResolver` | No credential, so no principal to report | `ok` — contributes no `"me"` identity |
+> | Implements it, call failed | Credential is bad, expired, or revoked | offline / auth-failed |
+> | Implements it, resolved | Normal | `ok` — contributes the `"me"` identity |
+>
+> Rows one and three are both healthy and differ only in whether they add an entry to the identity map. Collapsing rows one and two is the failure this amendment exists to prevent.
+>
+> `"me"` semantics are unchanged in every row: a filter term that cannot resolve for a given instance matches nothing on that instance, whether the identity is missing because there is no credential or because the credential failed.
+
 > **Clarified against ADR-010 §2; behavior unchanged.** ADR-010 §2 rules that an unknown lazy field *matches* — a pull request whose CI or reviewer state is still pending, or whose load failed outright, passes a `ci_status` or `review_status` filter rather than being excluded. That is the opposite disposition from `"me"` matching nothing on an unavailable provider, and the two are deliberate because they are different axes.
 >
 > A lazy field is per-pull-request *data* that is not yet known. Excluding it would drop individual rows silently, with no provider-level signal to attribute the gap to — so the unknown row stays visible and is corrected when the value arrives.
@@ -178,6 +192,7 @@ The module stays at v0.x until the TUI ships. Go treats v0 as an explicit absenc
 - **§2, by ADR-010 §2** — assembly gains `EnsureLoaded`, a batch mechanism for completing lazy fields across the snapshot, with required write-back, bounded concurrency, and a reported cap. The responsibility split itself is unchanged: the mechanism is shared, the trigger stays with each consumer.
 - **§3, by ADR-010 §2** — no behavior change. A clarifying note distinguishes unresolved identity (matches nothing) from an unknown lazy field (matches); the two rules govern different axes.
 - **§5, by ADR-010 §6** — the keying decision is unchanged; `ResolvedIdentities` moves from `query` to `model`, holds `model.Identity`, and is cloned by `Compile`.
+- **§3, by STE-76** — a bug fix, not a policy change. `ResolveIdentity` becomes optional, so a source that implements no identity interface is healthy and contributes no `"me"` entry, rather than being offline by construction. Partial-failure and `"me"` semantics are otherwise unchanged.
 
 ## References
 
