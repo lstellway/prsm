@@ -9,6 +9,7 @@ package mock
 
 import (
 	"context"
+	"time"
 
 	"github.com/lstellway/prsm/adapter"
 	"github.com/lstellway/prsm/model"
@@ -30,6 +31,11 @@ func (mockConnection *Connection) Instance() model.ProviderInstance {
 type PullRequestSource struct {
 	Connection
 
+	// Delay, when nonzero, makes ListPullRequests sleep before returning —
+	// for tests that need to observe real concurrent timing (e.g. that
+	// several connections are actually fanned out in parallel, not called
+	// one after another).
+	Delay             time.Duration
 	PullRequests      []model.PullRequest
 	PullRequestsErr   error
 	CIStatus          model.CIStatus
@@ -41,6 +47,9 @@ type PullRequestSource struct {
 }
 
 func (mockSource *PullRequestSource) ListPullRequests(_ context.Context) ([]model.PullRequest, error) {
+	if mockSource.Delay > 0 {
+		time.Sleep(mockSource.Delay)
+	}
 	return mockSource.PullRequests, mockSource.PullRequestsErr
 }
 

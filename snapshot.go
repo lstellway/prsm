@@ -22,7 +22,7 @@ type ConnectionState int
 const (
 	// ConnectionStateUnknown is the zero value: no outcome has been recorded.
 	// Like PRStateUnknown and the other model sentinels, a ConnectionStatus
-	// in a Snapshot should never hold it; it exists so a partial literal
+	// in a PullRequestSnapshot should never hold it; it exists so a partial literal
 	// cannot pass itself off as healthy.
 	ConnectionStateUnknown ConnectionState = iota
 	// ConnectionStateOK means ListPullRequests returned with no error.
@@ -64,16 +64,15 @@ func (connectionState ConnectionState) String() string {
 }
 
 // ConnectionStatus reports one connection's outcome for the Fetch call that
-// produced the enclosing Snapshot.
+// produced the enclosing PullRequestSnapshot.
 type ConnectionStatus struct {
-	Name  string
-	Kind  model.ProviderKind
-	State ConnectionState
-	// SucceededAt is when this connection's ListPullRequests call returned
-	// successfully. It is only ever this Fetch call's own timestamp or the
-	// zero value — never a memory of some earlier, different call. A
+	Provider model.ProviderInstance
+	State    ConnectionState
+	// SucceededAt is when this connection's own ListPullRequests call
+	// returned successfully — not when Fetch was invoked, and not a memory
+	// of some earlier, different call; it is the zero value on failure. A
 	// consumer that wants "how long has this been down" tracks that itself
-	// across successive Snapshots.
+	// across successive PullRequestSnapshots.
 	SucceededAt time.Time
 	// Err is nil when State is ConnectionStateOK, and the cause otherwise.
 	// It is the same error ListPullRequests returned, so errors.As still
@@ -81,10 +80,10 @@ type ConnectionStatus struct {
 	Err error
 }
 
-// Snapshot is one point-in-time result of fetching pull requests across
+// PullRequestSnapshot is one point-in-time result of fetching pull requests across
 // every connection a Client holds. It carries no memory of any earlier
-// Snapshot — see ConnectionStatus.SucceededAt.
-type Snapshot struct {
+// PullRequestSnapshot — see ConnectionStatus.SucceededAt.
+type PullRequestSnapshot struct {
 	// PullRequests is every pull request returned by every connection that
 	// served pull requests, in Client.pullRequestSources order. A
 	// connection whose ListPullRequests call partially failed still
@@ -94,22 +93,22 @@ type Snapshot struct {
 	// Connections reports one status per connection Fetch attempted, in
 	// Client.pullRequestSources order.
 	Connections []ConnectionStatus
-	// FetchedAt is when this Snapshot's Fetch call was made.
+	// FetchedAt is when this PullRequestSnapshot's Fetch call was made.
 	FetchedAt time.Time
 }
 
 // Fetch fans out ListPullRequests across every connection that serves pull
-// requests and aggregates the results into a Snapshot. One connection
+// requests and aggregates the results into a PullRequestSnapshot. One connection
 // failing does not fail the others: a connection whose call errors still
 // contributes whatever pull requests it did return, with its degraded
 // status recorded on Connections.
 //
-// Fetch never returns an error itself — even a Snapshot where every
+// Fetch never returns an error itself — even a PullRequestSnapshot where every
 // connection failed is a valid result, not a failure to produce one. This
 // mirrors New: partial (or total) per-connection failure is reported
 // through the result's structure, never through a top-level error that
-// would invite a caller to discard an otherwise-usable Snapshot.
-func (client *Client) Fetch(ctx context.Context) Snapshot {
+// would invite a caller to discard an otherwise-usable PullRequestSnapshot.
+func (client *Client) Fetch(ctx context.Context) PullRequestSnapshot {
 	fetchedAt := time.Now()
 
 	pullRequestsByConnection := make([][]model.PullRequest, len(client.pullRequestSources))
@@ -120,10 +119,17 @@ func (client *Client) Fetch(ctx context.Context) Snapshot {
 		waitGroup.Add(1)
 		go func() {
 			defer waitGroup.Done()
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					connections[index] = newConnectionStatus(
+						pullRequestSource.Instance(), fetchedAt, fmt.Errorf("panic: %v", recovered))
+				}
+			}()
 
 			pullRequests, err := pullRequestSource.ListPullRequests(ctx)
+			succeededAt := time.Now()
 			pullRequestsByConnection[index] = pullRequests
-			connections[index] = newConnectionStatus(pullRequestSource.Instance(), fetchedAt, err)
+			connections[index] = newConnectionStatus(pullRequestSource.Instance(), succeededAt, err)
 		}()
 	}
 	waitGroup.Wait()
@@ -133,7 +139,7 @@ func (client *Client) Fetch(ctx context.Context) Snapshot {
 		allPullRequests = append(allPullRequests, pullRequests...)
 	}
 
-	return Snapshot{
+	return PullRequestSnapshot{
 		PullRequests: allPullRequests,
 		Connections:  connections,
 		FetchedAt:    fetchedAt,
@@ -145,11 +151,11 @@ func (client *Client) Fetch(ctx context.Context) Snapshot {
 // GitHub's per-repo aggregation produces — takes priority over the generic
 // Offline bucket, since both carry a more specific, more actionable meaning
 // than "something went wrong."
-func newConnectionStatus(instance model.ProviderInstance, fetchedAt time.Time, err error) ConnectionStatus {
-	status := ConnectionStatus{Name: instance.Name, Kind: instance.Kind, Err: err}
+func newConnectionStatus(instance model.ProviderInstance, succeededAt time.Time, err error) ConnectionStatus {
+	status := ConnectionStatus{Provider: instance, Err: err}
 	if err == nil {
 		status.State = ConnectionStateOK
-		status.SucceededAt = fetchedAt
+		status.SucceededAt = succeededAt
 		return status
 	}
 

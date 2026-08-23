@@ -422,8 +422,8 @@ func TestNewWithConnections_DuplicateNames(t *testing.T) {
 	if len(failedProviders) != 1 {
 		t.Fatalf("FailedProviders() = %d, want 1", len(failedProviders))
 	}
-	if failedProviders[0].Provider != "dup" || failedProviders[0].Type != model.ProviderGitea || failedProviders[0].Reason != ConstructErrorReasonDuplicateName {
-		t.Errorf("FailedProviders()[0] = %+v, want Provider=dup Type=%v Reason=ConstructErrorReasonDuplicateName", failedProviders[0], model.ProviderGitea)
+	if failedProviders[0].Provider != "dup" || failedProviders[0].Kind != model.ProviderGitea || failedProviders[0].Reason != ConstructErrorReasonDuplicateName {
+		t.Errorf("FailedProviders()[0] = %+v, want Provider=dup Kind=%v Reason=ConstructErrorReasonDuplicateName", failedProviders[0], model.ProviderGitea)
 	}
 
 	pullRequestSource, ok := client.PullRequestSourceFor(model.ProviderInstance{Name: "dup"})

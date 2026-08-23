@@ -81,6 +81,12 @@ type PullRequest struct {
 // content fields like Title, Body, Labels, and the LoadResult-wrapped fields
 // are irrelevant to routing and are deliberately left off. HeadSHA is
 // included because LoadCI needs it directly, not just to find the PR.
+// ProviderID carries the same provider-scoped internal ID as
+// PullRequest.ProviderID — GitHub's adapter has no use for it today
+// (Repo/Number address a PR through the REST API it calls), but a vendor
+// whose lazy-load endpoints address a PR by internal ID rather than
+// owner/repo/number will need it here rather than reintroducing a full
+// PullRequest just to carry one more field.
 type PullRequestRef struct {
 	Provider   ProviderInstance
 	Repo       Repository

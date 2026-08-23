@@ -3,6 +3,7 @@ package prsm
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -11,24 +12,91 @@ import (
 	"github.com/lstellway/prsm/model"
 )
 
-func connectionStatusFor(snapshot Snapshot, name string) (ConnectionStatus, bool) {
+func connectionStatusFor(snapshot PullRequestSnapshot, name string) (ConnectionStatus, bool) {
 	for _, status := range snapshot.Connections {
-		if status.Name == name {
+		if status.Provider.Name == name {
 			return status, true
 		}
 	}
 	return ConnectionStatus{}, false
 }
 
+// newMockPullRequestSource builds a single named GitHub connection returning
+// pullRequests or err, cutting the three-level mock.PullRequestSource{
+// Connection: mock.Connection{InstanceVal: ...}} literal every Fetch test
+// would otherwise repeat.
+func newMockPullRequestSource(name string, pullRequests []model.PullRequest, err error) *mock.PullRequestSource {
+	return &mock.PullRequestSource{
+		Connection:      mock.Connection{InstanceVal: model.ProviderInstance{Name: name, Kind: model.ProviderGitHub}},
+		PullRequests:    pullRequests,
+		PullRequestsErr: err,
+	}
+}
+
+func TestNewConnectionStatus_Success(t *testing.T) {
+	instance := model.ProviderInstance{Name: "instance", Kind: model.ProviderGitHub}
+	succeededAt := time.Now()
+
+	status := newConnectionStatus(instance, succeededAt, nil)
+
+	if status.Provider != instance {
+		t.Errorf("Provider = %+v, want %+v", status.Provider, instance)
+	}
+	if status.State != ConnectionStateOK {
+		t.Errorf("State = %v, want ConnectionStateOK", status.State)
+	}
+	if !status.SucceededAt.Equal(succeededAt) {
+		t.Errorf("SucceededAt = %v, want %v", status.SucceededAt, succeededAt)
+	}
+	if status.Err != nil {
+		t.Errorf("Err = %v, want nil", status.Err)
+	}
+}
+
+// TestNewConnectionStatus_Classification exercises newConnectionStatus
+// directly rather than through a full Fetch call, so a new ConnectionState
+// case only needs a new table row instead of a mock/client/goroutine round
+// trip. sentinelTime stands in for whatever "this Fetch call" timestamp a
+// caller happens to pass; classification never uses it on the error path, so
+// every case asserts SucceededAt stays zero regardless.
+func TestNewConnectionStatus_Classification(t *testing.T) {
+	sentinelTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	testCases := []struct {
+		name      string
+		err       error
+		wantState ConnectionState
+	}{
+		{"plain error", errors.New("connection refused"), ConnectionStateOffline},
+		{"rate limit error", adapter.RateLimitError{}, ConnectionStateRateLimited},
+		{"auth error", adapter.AuthError{}, ConnectionStateUnauthorized},
+		{"not found error falls back to offline", adapter.NotFoundError{}, ConnectionStateOffline},
+		{"rate limit wrapped with fmt.Errorf", fmt.Errorf("listing pull requests: %w", adapter.RateLimitError{}), ConnectionStateRateLimited},
+		{"rate limit inside errors.Join with a plain error", errors.Join(errors.New("network error"), adapter.RateLimitError{}), ConnectionStateRateLimited},
+		{"auth error inside errors.Join with a plain error", errors.Join(errors.New("network error"), adapter.AuthError{}), ConnectionStateUnauthorized},
+		{"rate limit takes priority over auth error in the same join", errors.Join(adapter.AuthError{}, adapter.RateLimitError{}), ConnectionStateRateLimited},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			status := newConnectionStatus(model.ProviderInstance{Name: "instance"}, sentinelTime, testCase.err)
+
+			if status.State != testCase.wantState {
+				t.Errorf("State = %v, want %v", status.State, testCase.wantState)
+			}
+			if status.Err != testCase.err {
+				t.Errorf("Err = %v, want %v", status.Err, testCase.err)
+			}
+			if !status.SucceededAt.IsZero() {
+				t.Errorf("SucceededAt = %v, want zero", status.SucceededAt)
+			}
+		})
+	}
+}
+
 func TestFetch_AllHealthy(t *testing.T) {
-	healthyOne := &mock.PullRequestSource{
-		Connection:   mock.Connection{InstanceVal: model.ProviderInstance{Name: "one", Kind: model.ProviderGitHub}},
-		PullRequests: []model.PullRequest{{Number: 1}},
-	}
-	healthyTwo := &mock.PullRequestSource{
-		Connection:   mock.Connection{InstanceVal: model.ProviderInstance{Name: "two", Kind: model.ProviderGitHub}},
-		PullRequests: []model.PullRequest{{Number: 2}, {Number: 3}},
-	}
+	healthyOne := newMockPullRequestSource("one", []model.PullRequest{{Number: 1}}, nil)
+	healthyTwo := newMockPullRequestSource("two", []model.PullRequest{{Number: 2}, {Number: 3}}, nil)
 
 	client := NewWithConnections(healthyOne, healthyTwo)
 
@@ -54,6 +122,9 @@ func TestFetch_AllHealthy(t *testing.T) {
 		if status.State != ConnectionStateOK {
 			t.Errorf("%s: State = %v, want ConnectionStateOK", name, status.State)
 		}
+		if status.Provider.Kind != model.ProviderGitHub {
+			t.Errorf("%s: Provider.Kind = %v, want %v", name, status.Provider.Kind, model.ProviderGitHub)
+		}
 		if status.Err != nil {
 			t.Errorf("%s: Err = %v, want nil", name, status.Err)
 		}
@@ -63,19 +134,44 @@ func TestFetch_AllHealthy(t *testing.T) {
 	}
 }
 
+// TestFetch_RunsConnectionsConcurrently proves Fetch actually fans out in
+// parallel rather than merely aggregating correctly regardless of order — a
+// suite that only checks final state would still pass if a future change
+// collapsed the goroutines into a sequential loop. Three connections at 100ms
+// each would take ~300ms run serially; run concurrently they take ~100ms.
+// The 250ms bound leaves a wide margin above the concurrent case and a wide
+// margin below the serial case, so this should not flake under normal
+// scheduling load.
+func TestFetch_RunsConnectionsConcurrently(t *testing.T) {
+	const delay = 100 * time.Millisecond
+
+	sources := make([]adapter.Connection, 3)
+	for index, name := range []string{"one", "two", "three"} {
+		sources[index] = &mock.PullRequestSource{
+			Connection: mock.Connection{InstanceVal: model.ProviderInstance{Name: name}},
+			Delay:      delay,
+		}
+	}
+
+	client := NewWithConnections(sources...)
+
+	started := time.Now()
+	client.Fetch(context.Background())
+	elapsed := time.Since(started)
+
+	const bound = 250 * time.Millisecond
+	if elapsed >= bound {
+		t.Errorf("Fetch took %v across 3 connections at %v delay each, want under %v — looks sequential, not concurrent", elapsed, delay, bound)
+	}
+}
+
 // TestFetch_OneHealthyOneBroken is the issue's acceptance criterion: a fetch
 // across one healthy and one broken connection returns the healthy pull
 // requests plus a visible error for the broken one.
 func TestFetch_OneHealthyOneBroken(t *testing.T) {
-	healthy := &mock.PullRequestSource{
-		Connection:   mock.Connection{InstanceVal: model.ProviderInstance{Name: "healthy", Kind: model.ProviderGitHub}},
-		PullRequests: []model.PullRequest{{Number: 1}},
-	}
+	healthy := newMockPullRequestSource("healthy", []model.PullRequest{{Number: 1}}, nil)
 	brokenErr := errors.New("connection refused")
-	broken := &mock.PullRequestSource{
-		Connection:      mock.Connection{InstanceVal: model.ProviderInstance{Name: "broken", Kind: model.ProviderGitHub}},
-		PullRequestsErr: brokenErr,
-	}
+	broken := newMockPullRequestSource("broken", nil, brokenErr)
 
 	client := NewWithConnections(healthy, broken)
 	snapshot := client.Fetch(context.Background())
@@ -109,10 +205,7 @@ func TestFetch_OneHealthyOneBroken(t *testing.T) {
 
 func TestFetch_RateLimitedConnection(t *testing.T) {
 	retryAfter := time.Now().Add(time.Hour)
-	source := &mock.PullRequestSource{
-		Connection:      mock.Connection{InstanceVal: model.ProviderInstance{Name: "limited"}},
-		PullRequestsErr: adapter.RateLimitError{RetryAfter: retryAfter},
-	}
+	source := newMockPullRequestSource("limited", nil, adapter.RateLimitError{RetryAfter: retryAfter})
 
 	snapshot := NewWithConnections(source).Fetch(context.Background())
 
@@ -134,10 +227,7 @@ func TestFetch_RateLimitedConnection(t *testing.T) {
 }
 
 func TestFetch_UnauthorizedConnection(t *testing.T) {
-	source := &mock.PullRequestSource{
-		Connection:      mock.Connection{InstanceVal: model.ProviderInstance{Name: "bad-token"}},
-		PullRequestsErr: adapter.AuthError{},
-	}
+	source := newMockPullRequestSource("bad-token", nil, adapter.AuthError{})
 
 	snapshot := NewWithConnections(source).Fetch(context.Background())
 
@@ -156,10 +246,7 @@ func TestFetch_UnauthorizedConnection(t *testing.T) {
 // the generic Offline bucket, even alongside an unrelated plain error.
 func TestFetch_RateLimitInsideJoinedError(t *testing.T) {
 	joined := errors.Join(errors.New("repo-a: network error"), adapter.RateLimitError{})
-	source := &mock.PullRequestSource{
-		Connection:      mock.Connection{InstanceVal: model.ProviderInstance{Name: "mixed"}},
-		PullRequestsErr: joined,
-	}
+	source := newMockPullRequestSource("mixed", nil, joined)
 
 	snapshot := NewWithConnections(source).Fetch(context.Background())
 
@@ -184,5 +271,21 @@ func TestFetch_NoPullRequestSources(t *testing.T) {
 	}
 	if len(snapshot.Connections) != 0 {
 		t.Errorf("Connections = %d, want 0: identity-only connections do not serve pull requests", len(snapshot.Connections))
+	}
+}
+
+// TestFetch_NoConnectionsAtAll is distinct from TestFetch_NoPullRequestSources:
+// this client holds no connections whatsoever, rather than one connection
+// that simply doesn't serve pull requests. Both take the same code path
+// today, but locking in the zero-connections case explicitly keeps that an
+// asserted fact rather than an untested coincidence.
+func TestFetch_NoConnectionsAtAll(t *testing.T) {
+	snapshot := NewWithConnections().Fetch(context.Background())
+
+	if len(snapshot.PullRequests) != 0 {
+		t.Errorf("PullRequests = %d, want 0", len(snapshot.PullRequests))
+	}
+	if len(snapshot.Connections) != 0 {
+		t.Errorf("Connections = %d, want 0: no connections were passed to NewWithConnections", len(snapshot.Connections))
 	}
 }

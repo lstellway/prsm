@@ -37,6 +37,12 @@ type Connection interface {
 // PullRequestSource is implemented by connections serving
 // model.ResourceKindPullRequest. Each method corresponds to one layer of the
 // lazy-fetch model.
+//
+// Every method must return promptly once ctx is cancelled or its deadline
+// passes. prsm.Client.Fetch fans ListPullRequests out across every
+// PullRequestSource concurrently and waits for all of them, so one
+// implementation that ignores ctx makes the whole fan-out unresponsive to
+// cancellation, not just its own call.
 type PullRequestSource interface {
 	Connection
 
