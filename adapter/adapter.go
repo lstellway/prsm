@@ -37,6 +37,12 @@ type Connection interface {
 // PullRequestSource is implemented by connections serving
 // model.ResourceKindPullRequest. Each method corresponds to one layer of the
 // lazy-fetch model.
+//
+// Every method must return promptly once ctx is cancelled or its deadline
+// passes. prsm.Client.Fetch fans ListPullRequests out across every
+// PullRequestSource concurrently and waits for all of them, so one
+// implementation that ignores ctx makes the whole fan-out unresponsive to
+// cancellation, not just its own call.
 type PullRequestSource interface {
 	Connection
 
@@ -46,13 +52,13 @@ type PullRequestSource interface {
 	ListPullRequests(ctx context.Context) ([]model.PullRequest, error)
 
 	// LoadCI fetches CI status for a single PR and returns the updated value.
-	LoadCI(ctx context.Context, pullRequest model.PullRequest) (model.CIStatus, error)
+	LoadCI(ctx context.Context, pullRequestRef model.PullRequestRef) (model.CIStatus, error)
 
 	// LoadReviewerStates fetches full reviewer decisions for a single PR.
-	LoadReviewerStates(ctx context.Context, pullRequest model.PullRequest) ([]model.ReviewerState, error)
+	LoadReviewerStates(ctx context.Context, pullRequestRef model.PullRequestRef) ([]model.ReviewerState, error)
 
 	// LoadDiff fetches commit and file-change counts for a single PR.
-	LoadDiff(ctx context.Context, pullRequest model.PullRequest) (model.DiffStats, error)
+	LoadDiff(ctx context.Context, pullRequestRef model.PullRequestRef) (model.DiffStats, error)
 }
 
 // IdentityResolver is implemented by connections that authenticate as somebody.

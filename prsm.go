@@ -78,29 +78,33 @@ func (reason ConstructErrorReason) String() string {
 // on Client.FailedProviders. Its four Reasons are the exhaustive,
 // mutually-exclusive output of one function (constructConnection, plus the
 // equivalent dedup step in NewWithConnections) and all share the same
-// Provider/Type shape, so they live on one struct with a discriminator
+// Provider/Kind shape, so they live on one struct with a discriminator
 // rather than as four separate types the way adapter/errors.go models
 // genuinely independent, heterogeneous adapter-call failures (RateLimitError,
 // AuthError, NotFoundError can each occur on any adapter method, at any
 // time, with no shared fields). Use errors.As to recover a ConstructError
 // from an error value and branch on Reason instead of matching error text.
+//
+// Kind matches the field name model.ProviderInstance and PullRequestSnapshot's
+// ConnectionStatus use for the same concept, rather than the plain-error
+// convention of calling it Type.
 type ConstructError struct {
 	Provider string
-	Type     model.ProviderKind
+	Kind     model.ProviderKind
 	Reason   ConstructErrorReason
 	Err      error // meaningful only when Reason == ConstructErrorReasonFailed
 }
 
-func newConstructError(provider string, providerType model.ProviderKind, reason ConstructErrorReason, err error) *ConstructError {
-	return &ConstructError{Provider: provider, Type: providerType, Reason: reason, Err: err}
+func newConstructError(provider string, providerKind model.ProviderKind, reason ConstructErrorReason, err error) *ConstructError {
+	return &ConstructError{Provider: provider, Kind: providerKind, Reason: reason, Err: err}
 }
 
 func (constructError *ConstructError) Error() string {
 	switch constructError.Reason {
 	case ConstructErrorReasonUnknownType:
-		return fmt.Sprintf("construct provider %q: unknown provider type %q", constructError.Provider, constructError.Type)
+		return fmt.Sprintf("construct provider %q: unknown provider type %q", constructError.Provider, constructError.Kind)
 	case ConstructErrorReasonNotImplemented:
-		return fmt.Sprintf("construct provider %q: %q adapter is not implemented yet", constructError.Provider, constructError.Type)
+		return fmt.Sprintf("construct provider %q: %q adapter is not implemented yet", constructError.Provider, constructError.Kind)
 	case ConstructErrorReasonDuplicateName:
 		return fmt.Sprintf("construct provider %q: duplicate provider name", constructError.Provider)
 	case ConstructErrorReasonFailed:
