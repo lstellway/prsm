@@ -209,9 +209,9 @@ func (githubAdapter *GitHubAdapter) listRepoPullRequests(
 
 // LoadCI fetches CI/check-run status for a PR's head commit via REST.
 func (githubAdapter *GitHubAdapter) LoadCI(
-	ctx context.Context, pullRequest model.PullRequest,
+	ctx context.Context, pullRequestRef model.PullRequestRef,
 ) (model.CIStatus, error) {
-	if pullRequest.HeadSHA == "" {
+	if pullRequestRef.HeadSHA == "" {
 		return model.CIStatus{State: model.CIStateNone}, nil
 	}
 
@@ -226,13 +226,13 @@ func (githubAdapter *GitHubAdapter) LoadCI(
 	for page := 1; ; page++ {
 		if page > maxPages {
 			return model.CIStatus{}, fmt.Errorf("github %q: load CI for %s#%d: exceeded %d-page limit",
-				githubAdapter.providerName, pullRequest.Repo.Name, pullRequest.Number, maxPages)
+				githubAdapter.providerName, pullRequestRef.Repo.Name, pullRequestRef.Number, maxPages)
 		}
 		checkRunsResponse, response, err := githubAdapter.rest.Checks.ListCheckRunsForRef(
-			ctx, pullRequest.Repo.Owner, pullRequest.Repo.Name, pullRequest.HeadSHA, listOptions)
+			ctx, pullRequestRef.Repo.Owner, pullRequestRef.Repo.Name, pullRequestRef.HeadSHA, listOptions)
 		if err != nil {
 			return model.CIStatus{}, fmt.Errorf("github %q: load CI for %s#%d: %w",
-				githubAdapter.providerName, pullRequest.Repo.Name, pullRequest.Number, err)
+				githubAdapter.providerName, pullRequestRef.Repo.Name, pullRequestRef.Number, err)
 		}
 		if rateLimitErr := checkRateLimit(githubAdapter.Instance(), response.Response); rateLimitErr != nil {
 			return model.CIStatus{}, rateLimitErr
@@ -249,7 +249,7 @@ func (githubAdapter *GitHubAdapter) LoadCI(
 
 // LoadReviewerStates fetches individual review decisions for a PR via REST.
 func (githubAdapter *GitHubAdapter) LoadReviewerStates(
-	ctx context.Context, pullRequest model.PullRequest,
+	ctx context.Context, pullRequestRef model.PullRequestRef,
 ) ([]model.ReviewerState, error) {
 	// 50 pages × 100 reviews = 5,000 reviews maximum per PR.
 	const maxPages = 50
@@ -260,13 +260,13 @@ func (githubAdapter *GitHubAdapter) LoadReviewerStates(
 	for page := 1; ; page++ {
 		if page > maxPages {
 			return nil, fmt.Errorf("github %q: load reviews for %s#%d: exceeded %d-page limit",
-				githubAdapter.providerName, pullRequest.Repo.Name, pullRequest.Number, maxPages)
+				githubAdapter.providerName, pullRequestRef.Repo.Name, pullRequestRef.Number, maxPages)
 		}
 		reviewPage, response, err := githubAdapter.rest.PullRequests.ListReviews(
-			ctx, pullRequest.Repo.Owner, pullRequest.Repo.Name, pullRequest.Number, listOptions)
+			ctx, pullRequestRef.Repo.Owner, pullRequestRef.Repo.Name, pullRequestRef.Number, listOptions)
 		if err != nil {
 			return nil, fmt.Errorf("github %q: load reviews for %s#%d: %w",
-				githubAdapter.providerName, pullRequest.Repo.Name, pullRequest.Number, err)
+				githubAdapter.providerName, pullRequestRef.Repo.Name, pullRequestRef.Number, err)
 		}
 		if rateLimitErr := checkRateLimit(githubAdapter.Instance(), response.Response); rateLimitErr != nil {
 			return nil, rateLimitErr
@@ -283,13 +283,13 @@ func (githubAdapter *GitHubAdapter) LoadReviewerStates(
 
 // LoadDiff fetches commit and file-change counts for a PR via the REST detail endpoint.
 func (githubAdapter *GitHubAdapter) LoadDiff(
-	ctx context.Context, pullRequest model.PullRequest,
+	ctx context.Context, pullRequestRef model.PullRequestRef,
 ) (model.DiffStats, error) {
 	githubPullRequest, response, err := githubAdapter.rest.PullRequests.Get(
-		ctx, pullRequest.Repo.Owner, pullRequest.Repo.Name, pullRequest.Number)
+		ctx, pullRequestRef.Repo.Owner, pullRequestRef.Repo.Name, pullRequestRef.Number)
 	if err != nil {
 		return model.DiffStats{}, fmt.Errorf("github %q: load diff for %s#%d: %w",
-			githubAdapter.providerName, pullRequest.Repo.Name, pullRequest.Number, err)
+			githubAdapter.providerName, pullRequestRef.Repo.Name, pullRequestRef.Number, err)
 	}
 	if rateLimitErr := checkRateLimit(githubAdapter.Instance(), response.Response); rateLimitErr != nil {
 		return model.DiffStats{}, rateLimitErr

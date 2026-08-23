@@ -44,15 +44,15 @@ func (mockSource *PullRequestSource) ListPullRequests(_ context.Context) ([]mode
 	return mockSource.PullRequests, mockSource.PullRequestsErr
 }
 
-func (mockSource *PullRequestSource) LoadCI(_ context.Context, _ model.PullRequest) (model.CIStatus, error) {
+func (mockSource *PullRequestSource) LoadCI(_ context.Context, _ model.PullRequestRef) (model.CIStatus, error) {
 	return mockSource.CIStatus, mockSource.CIErr
 }
 
-func (mockSource *PullRequestSource) LoadReviewerStates(_ context.Context, _ model.PullRequest) ([]model.ReviewerState, error) {
+func (mockSource *PullRequestSource) LoadReviewerStates(_ context.Context, _ model.PullRequestRef) ([]model.ReviewerState, error) {
 	return mockSource.ReviewerStates, mockSource.ReviewerStatesErr
 }
 
-func (mockSource *PullRequestSource) LoadDiff(_ context.Context, _ model.PullRequest) (model.DiffStats, error) {
+func (mockSource *PullRequestSource) LoadDiff(_ context.Context, _ model.PullRequestRef) (model.DiffStats, error) {
 	return mockSource.DiffStats, mockSource.DiffErr
 }
 

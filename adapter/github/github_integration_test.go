@@ -122,7 +122,7 @@ func TestLoadCI(t *testing.T) {
 		t.Skip("no open PRs to test LoadCI against")
 	}
 
-	ciStatus, err := githubAdapter.LoadCI(context.Background(), pullRequests[0])
+	ciStatus, err := githubAdapter.LoadCI(context.Background(), pullRequests[0].Ref())
 	if err != nil {
 		t.Fatalf("LoadCI: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestLoadReviewerStates(t *testing.T) {
 		t.Skip("no open PRs to test LoadReviewerStates against")
 	}
 
-	states, err := githubAdapter.LoadReviewerStates(context.Background(), pullRequests[0])
+	states, err := githubAdapter.LoadReviewerStates(context.Background(), pullRequests[0].Ref())
 	if err != nil {
 		t.Fatalf("LoadReviewerStates: %v", err)
 	}

@@ -75,3 +75,27 @@ type PullRequest struct {
 	UpdatedAt time.Time
 	MergedAt  *time.Time // nil if not merged
 }
+
+// PullRequestRef identifies a pull request for routing a lazy-load call back
+// to its connection, without carrying the full normalized PullRequest —
+// content fields like Title, Body, Labels, and the LoadResult-wrapped fields
+// are irrelevant to routing and are deliberately left off. HeadSHA is
+// included because LoadCI needs it directly, not just to find the PR.
+type PullRequestRef struct {
+	Provider   ProviderInstance
+	Repo       Repository
+	Number     int
+	ProviderID string
+	HeadSHA    string
+}
+
+// Ref builds the routing handle for this PullRequest.
+func (pullRequest PullRequest) Ref() PullRequestRef {
+	return PullRequestRef{
+		Provider:   pullRequest.Provider,
+		Repo:       pullRequest.Repo,
+		Number:     pullRequest.Number,
+		ProviderID: pullRequest.ProviderID,
+		HeadSHA:    pullRequest.HeadSHA,
+	}
+}
