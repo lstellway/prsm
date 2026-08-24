@@ -375,11 +375,7 @@ func TestNewWithConnections_CapabilityIndexing(t *testing.T) {
 
 	identityNames := make([]string, len(client.IdentityResolvers()))
 	for index, identityResolver := range client.IdentityResolvers() {
-		connection, ok := identityResolver.(adapter.Connection)
-		if !ok {
-			t.Fatalf("IdentityResolvers()[%d] does not implement adapter.Connection", index)
-		}
-		identityNames[index] = connection.Instance().Name
+		identityNames[index] = identityResolver.Instance().Name
 	}
 	if want := []string{"identity-only", "both"}; !reflect.DeepEqual(identityNames, want) {
 		t.Errorf("IdentityResolvers() names = %v, want %v", identityNames, want)

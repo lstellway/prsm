@@ -2,8 +2,6 @@ package prsm
 
 import (
 	"context"
-	"fmt"
-	"sync"
 	"time"
 
 	"github.com/lstellway/prsm/adapter"
@@ -12,27 +10,23 @@ import (
 )
 
 // IdentityStatus reports one identity-resolving connection's outcome for the
-// ResolveIdentities call that produced the enclosing query.ResolvedIdentities.
+// ResolveIdentities call that produced the enclosing IdentityResolution.
 //
-// It reuses ConnectionState rather than defining its own enum: ResolveIdentity
-// hits the same vendor API as ListPullRequests and fails the same three ways —
-// offline, rate limited, unauthorized. It is still a distinct type from
-// ConnectionStatus, not folded into PullRequestSnapshot, because the two calls
-// run on different schedules — identity resolves once at startup,
-// ListPullRequests runs every poll cycle — and merging them would tie
-// identity's lifetime to Fetch's.
+// It shares connectionOutcome with ConnectionStatus rather than repeating
+// Provider/State/Err on its own: ResolveIdentity hits the same vendor API as
+// ListPullRequests and fails the same three ways — offline, rate limited,
+// unauthorized. IdentityStatus stays a distinct named type, not folded into
+// ConnectionStatus itself, because the two calls run on different
+// schedules — identity resolves once at startup, ListPullRequests runs every
+// poll cycle — and giving them one type would tie identity's lifetime to
+// Fetch's.
 //
 // A connection that does not implement adapter.IdentityResolver never
 // produces an IdentityStatus at all; see adapter.IdentityResolver's doc
 // comment for why that omission, not a degraded status, is how "not served"
 // stays distinct from "served, but failed."
 type IdentityStatus struct {
-	Provider model.ProviderInstance
-	State    ConnectionState
-	// Err is nil when State is ConnectionStateOK, and the cause otherwise —
-	// the same error ResolveIdentity returned, so errors.As still reaches
-	// adapter.AuthError / adapter.RateLimitError through it.
-	Err error
+	connectionOutcome
 	// ResolvedAt is when this connection's own ResolveIdentity call returned
 	// successfully. It is the zero value on failure, mirroring
 	// ConnectionStatus.SucceededAt.
@@ -42,65 +36,65 @@ type IdentityStatus struct {
 // newIdentityStatus classifies err into a ConnectionState via
 // classifyConnectionState and records resolvedAt only on success.
 func newIdentityStatus(instance model.ProviderInstance, resolvedAt time.Time, err error) IdentityStatus {
-	status := IdentityStatus{Provider: instance, Err: err, State: classifyConnectionState(err)}
+	status := IdentityStatus{connectionOutcome: connectionOutcome{Provider: instance, Err: err, State: classifyConnectionState(err)}}
 	if err == nil {
 		status.ResolvedAt = resolvedAt
 	}
 	return status
 }
 
+// IdentityResolution is one point-in-time result of resolving "me" across
+// every connection a Client holds, mirroring PullRequestSnapshot's shape for
+// Fetch. It carries no memory of any earlier IdentityResolution — see
+// IdentityStatus.ResolvedAt.
+type IdentityResolution struct {
+	// Identities maps provider instance name to the resolved identity, ready
+	// to use as query.PRFilterSpec.Compile's resolvedMe argument. A
+	// connection whose resolution failed contributes no entry here — see
+	// Statuses for that connection's degraded status.
+	Identities query.ResolvedIdentities
+	// Statuses reports one status per connection ResolveIdentities attempted,
+	// in Client.identityResolvers order.
+	Statuses []IdentityStatus
+	// ResolvedAt is when this IdentityResolution's ResolveIdentities call was made.
+	ResolvedAt time.Time
+}
+
 // ResolveIdentities calls ResolveIdentity on every connection that implements
-// adapter.IdentityResolver and aggregates the results into a
-// query.ResolvedIdentities map, keyed by ProviderInstance.Name for use with
-// query.PRFilterSpec.Compile, plus one IdentityStatus per attempted
-// connection recording how the call went.
+// adapter.IdentityResolver and aggregates the results into an
+// IdentityResolution: a query.ResolvedIdentities map, keyed by
+// ProviderInstance.Name for use with query.PRFilterSpec.Compile, plus one
+// IdentityStatus per attempted connection recording how the call went.
 //
-// A connection whose ResolveIdentity call fails contributes no entry to the
-// returned map — query.ResolvedIdentities already treats a missing entry as
+// A connection whose ResolveIdentity call fails contributes no entry to
+// Identities — query.ResolvedIdentities already treats a missing entry as
 // "cannot resolve me for this instance," a non-match rather than a match
 // against the empty string — but it does get an IdentityStatus reporting the
 // failure, so a caller can tell that degraded state apart from a connection
 // that never implements adapter.IdentityResolver, which is correctly absent
-// from both return values instead of reported as broken.
+// from both Identities and Statuses instead of reported as broken.
 //
 // ResolveIdentities never returns an error itself, mirroring Fetch: a result
 // where every connection failed to resolve is still a valid result, reported
-// through the returned []IdentityStatus.
+// through the returned IdentityResolution.
 //
 // Call this once at startup, or again if credentials might rotate at
 // runtime; results are not cached on Client, matching Fetch's statelessness —
 // a caller that wants to reuse a resolved identity across repeated Fetch
-// calls holds onto the returned query.ResolvedIdentities itself.
-func (client *Client) ResolveIdentities(ctx context.Context) (query.ResolvedIdentities, []IdentityStatus) {
-	identities := make([]*model.Identity, len(client.identityResolvers))
-	statuses := make([]IdentityStatus, len(client.identityResolvers))
+// calls holds onto the returned IdentityResolution itself.
+func (client *Client) ResolveIdentities(ctx context.Context) IdentityResolution {
+	resolvedAt := time.Now()
 
-	var waitGroup sync.WaitGroup
-	for index, identityResolver := range client.identityResolvers {
-		// Every element of client.identityResolvers was type-asserted from
-		// adapter.Connection in NewWithConnections, so this assertion always
-		// succeeds; TestNewWithConnections_CapabilityIndexing pins that
-		// invariant down.
-		connection := identityResolver.(adapter.Connection)
-
-		waitGroup.Add(1)
-		go func() {
-			defer waitGroup.Done()
-			defer func() {
-				if recovered := recover(); recovered != nil {
-					statuses[index] = newIdentityStatus(connection.Instance(), time.Now(), fmt.Errorf("panic: %v", recovered))
-				}
-			}()
-
+	identities, statuses := fanOut(ctx, client.identityResolvers,
+		func(ctx context.Context, identityResolver adapter.IdentityResolver) (*model.Identity, error) {
 			identity, err := identityResolver.ResolveIdentity(ctx)
-			resolvedAt := time.Now()
-			statuses[index] = newIdentityStatus(connection.Instance(), resolvedAt, err)
-			if err == nil {
-				identities[index] = &identity
+			if err != nil {
+				return nil, err
 			}
-		}()
-	}
-	waitGroup.Wait()
+			return &identity, nil
+		},
+		newIdentityStatus,
+	)
 
 	resolvedIdentities := make(query.ResolvedIdentities, len(client.identityResolvers))
 	for index, identity := range identities {
@@ -109,5 +103,9 @@ func (client *Client) ResolveIdentities(ctx context.Context) (query.ResolvedIden
 		}
 	}
 
-	return resolvedIdentities, statuses
+	return IdentityResolution{
+		Identities: resolvedIdentities,
+		Statuses:   statuses,
+		ResolvedAt: resolvedAt,
+	}
 }

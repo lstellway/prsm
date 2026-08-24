@@ -3,6 +3,7 @@ package prsm
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +12,20 @@ import (
 	"github.com/lstellway/prsm/model"
 	"github.com/lstellway/prsm/query"
 )
+
+// panickingIdentityResolver is a connection whose ResolveIdentity panics
+// instead of returning an error or a result, for exercising fanOut's
+// recover() branch (see fanout.go) — the mechanism that keeps one bad
+// connection from taking the rest of a ResolveIdentities call down with it.
+type panickingIdentityResolver struct {
+	mock.Connection
+}
+
+func (*panickingIdentityResolver) ResolveIdentity(context.Context) (model.Identity, error) {
+	panic("boom")
+}
+
+var _ adapter.IdentityResolver = (*panickingIdentityResolver)(nil)
 
 func identityStatusFor(statuses []IdentityStatus, name string) (IdentityStatus, bool) {
 	for _, status := range statuses {
@@ -82,9 +97,14 @@ func TestResolveIdentities_AllResolved(t *testing.T) {
 	client := NewWithConnections(alice, bob)
 
 	before := time.Now()
-	resolvedIdentities, statuses := client.ResolveIdentities(context.Background())
+	resolution := client.ResolveIdentities(context.Background())
 	after := time.Now()
 
+	if resolution.ResolvedAt.Before(before) || resolution.ResolvedAt.After(after) {
+		t.Errorf("ResolvedAt = %v, want between %v and %v", resolution.ResolvedAt, before, after)
+	}
+
+	resolvedIdentities, statuses := resolution.Identities, resolution.Statuses
 	if len(resolvedIdentities) != 2 {
 		t.Fatalf("resolvedIdentities = %d entries, want 2", len(resolvedIdentities))
 	}
@@ -126,7 +146,8 @@ func TestResolveIdentities_OneResolvedOneFailed(t *testing.T) {
 	broken := newMockIdentityOnly("broken", model.Identity{}, authErr)
 
 	client := NewWithConnections(healthy, broken)
-	resolvedIdentities, statuses := client.ResolveIdentities(context.Background())
+	resolution := client.ResolveIdentities(context.Background())
+	resolvedIdentities, statuses := resolution.Identities, resolution.Statuses
 
 	if len(resolvedIdentities) != 1 {
 		t.Fatalf("resolvedIdentities = %d entries, want 1", len(resolvedIdentities))
@@ -161,6 +182,41 @@ func TestResolveIdentities_OneResolvedOneFailed(t *testing.T) {
 	}
 }
 
+// TestResolveIdentities_RecoversFromPanic proves a connection whose
+// ResolveIdentity panics is reported as a degraded IdentityStatus rather than
+// crashing ResolveIdentities or losing the other connections' results — the
+// same guarantee TestFetch_OneHealthyOneBroken pins down for an ordinary
+// error, extended to fanOut's recover() branch.
+func TestResolveIdentities_RecoversFromPanic(t *testing.T) {
+	healthy := newMockIdentityOnly("healthy", model.Identity{Username: "alice"}, nil)
+	panicking := &panickingIdentityResolver{
+		Connection: mock.Connection{InstanceVal: model.ProviderInstance{Name: "panicking"}},
+	}
+
+	resolution := NewWithConnections(healthy, panicking).ResolveIdentities(context.Background())
+
+	if got := resolution.Identities["healthy"].Username; got != "alice" {
+		t.Errorf("resolvedIdentities[healthy].Username = %q, want %q: a panic on one connection must not take the others down", got, "alice")
+	}
+	if _, ok := resolution.Identities["panicking"]; ok {
+		t.Error("resolvedIdentities contains an entry for panicking, want none")
+	}
+
+	panickingStatus, ok := identityStatusFor(resolution.Statuses, "panicking")
+	if !ok {
+		t.Fatal("no IdentityStatus for panicking")
+	}
+	if panickingStatus.State != ConnectionStateOffline {
+		t.Errorf("panicking: State = %v, want ConnectionStateOffline", panickingStatus.State)
+	}
+	if panickingStatus.Err == nil || !strings.Contains(panickingStatus.Err.Error(), "panic: boom") {
+		t.Errorf("panicking: Err = %v, want it to mention %q", panickingStatus.Err, "panic: boom")
+	}
+	if !panickingStatus.ResolvedAt.IsZero() {
+		t.Errorf("panicking: ResolvedAt = %v, want zero", panickingStatus.ResolvedAt)
+	}
+}
+
 // TestResolveIdentities_NoIdentityResolvers is the issue's acceptance
 // criterion for state 1: a connection that does not implement
 // adapter.IdentityResolver at all — the local-checkout case, stood in for
@@ -171,7 +227,8 @@ func TestResolveIdentities_NoIdentityResolvers(t *testing.T) {
 	pullRequestOnly := newMockPullRequestSource("pr-only", nil, nil)
 
 	client := NewWithConnections(pullRequestOnly)
-	resolvedIdentities, statuses := client.ResolveIdentities(context.Background())
+	resolution := client.ResolveIdentities(context.Background())
+	resolvedIdentities, statuses := resolution.Identities, resolution.Statuses
 
 	if len(resolvedIdentities) != 0 {
 		t.Errorf("resolvedIdentities = %d entries, want 0", len(resolvedIdentities))
@@ -182,7 +239,8 @@ func TestResolveIdentities_NoIdentityResolvers(t *testing.T) {
 }
 
 func TestResolveIdentities_NoConnectionsAtAll(t *testing.T) {
-	resolvedIdentities, statuses := NewWithConnections().ResolveIdentities(context.Background())
+	resolution := NewWithConnections().ResolveIdentities(context.Background())
+	resolvedIdentities, statuses := resolution.Identities, resolution.Statuses
 
 	if len(resolvedIdentities) != 0 {
 		t.Errorf("resolvedIdentities = %d entries, want 0", len(resolvedIdentities))
@@ -227,7 +285,7 @@ func TestResolveIdentities_TwoInstancesOfOneKind(t *testing.T) {
 	personal := newMockIdentityOnly("github-personal", model.Identity{Username: "alice"}, nil)
 	enterprise := newMockIdentityOnly("github-enterprise", model.Identity{Username: "alice-corp"}, nil)
 
-	resolvedIdentities, _ := NewWithConnections(personal, enterprise).ResolveIdentities(context.Background())
+	resolvedIdentities := NewWithConnections(personal, enterprise).ResolveIdentities(context.Background()).Identities
 
 	if got := resolvedIdentities["github-personal"].Username; got != "alice" {
 		t.Errorf("resolvedIdentities[github-personal].Username = %q, want %q", got, "alice")
@@ -243,7 +301,7 @@ func TestResolveIdentities_TwoInstancesOfOneKind(t *testing.T) {
 // query.PRFilterSpec.Compile's resolvedMe argument.
 func TestResolveIdentities_FeedsPRFilterCompile(t *testing.T) {
 	me := newMockIdentityOnly("github-personal", model.Identity{Username: "alice"}, nil)
-	resolvedIdentities, _ := NewWithConnections(me).ResolveIdentities(context.Background())
+	resolvedIdentities := NewWithConnections(me).ResolveIdentities(context.Background()).Identities
 
 	predicate, err := (query.PRFilterSpec{BaseFilterSpec: query.BaseFilterSpec{Author: "me"}}).Compile(resolvedIdentities)
 	if err != nil {

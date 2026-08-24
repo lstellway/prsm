@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/lstellway/prsm/adapter"
@@ -84,21 +83,31 @@ func (connectionState ConnectionState) Label() string {
 	}
 }
 
+// connectionOutcome is the shared shape for one connection's per-call
+// outcome: which connection, what state its error (if any) classified into,
+// and the error itself. ConnectionStatus and IdentityStatus each embed it and
+// add their own single timestamp field — SucceededAt and ResolvedAt — since
+// Fetch and Client.ResolveIdentities (identity.go) record different moments
+// despite sharing everything else about how an outcome is reported.
+type connectionOutcome struct {
+	Provider model.ProviderInstance
+	State    ConnectionState
+	// Err is nil when State is ConnectionStateOK, and the cause otherwise.
+	// It is the same error the originating call returned, so errors.As still
+	// reaches adapter.RateLimitError / adapter.AuthError through it.
+	Err error
+}
+
 // ConnectionStatus reports one connection's outcome for the Fetch call that
 // produced the enclosing PullRequestSnapshot.
 type ConnectionStatus struct {
-	Provider model.ProviderInstance
-	State    ConnectionState
+	connectionOutcome
 	// SucceededAt is when this connection's own ListPullRequests call
 	// returned successfully — not when Fetch was invoked, and not a memory
 	// of some earlier, different call; it is the zero value on failure. A
 	// consumer that wants "how long has this been down" tracks that itself
 	// across successive PullRequestSnapshots.
 	SucceededAt time.Time
-	// Err is nil when State is ConnectionStateOK, and the cause otherwise.
-	// It is the same error ListPullRequests returned, so errors.As still
-	// reaches adapter.RateLimitError / adapter.AuthError through it.
-	Err error
 }
 
 // PullRequestSnapshot is one point-in-time result of fetching pull requests across
@@ -132,28 +141,12 @@ type PullRequestSnapshot struct {
 func (client *Client) Fetch(ctx context.Context) PullRequestSnapshot {
 	fetchedAt := time.Now()
 
-	pullRequestsByConnection := make([][]model.PullRequest, len(client.pullRequestSources))
-	connections := make([]ConnectionStatus, len(client.pullRequestSources))
-
-	var waitGroup sync.WaitGroup
-	for index, pullRequestSource := range client.pullRequestSources {
-		waitGroup.Add(1)
-		go func() {
-			defer waitGroup.Done()
-			defer func() {
-				if recovered := recover(); recovered != nil {
-					connections[index] = newConnectionStatus(
-						pullRequestSource.Instance(), fetchedAt, fmt.Errorf("panic: %v", recovered))
-				}
-			}()
-
-			pullRequests, err := pullRequestSource.ListPullRequests(ctx)
-			succeededAt := time.Now()
-			pullRequestsByConnection[index] = pullRequests
-			connections[index] = newConnectionStatus(pullRequestSource.Instance(), succeededAt, err)
-		}()
-	}
-	waitGroup.Wait()
+	pullRequestsByConnection, connections := fanOut(ctx, client.pullRequestSources,
+		func(ctx context.Context, pullRequestSource adapter.PullRequestSource) ([]model.PullRequest, error) {
+			return pullRequestSource.ListPullRequests(ctx)
+		},
+		newConnectionStatus,
+	)
 
 	var allPullRequests []model.PullRequest
 	for _, pullRequests := range pullRequestsByConnection {
@@ -170,7 +163,7 @@ func (client *Client) Fetch(ctx context.Context) PullRequestSnapshot {
 // newConnectionStatus classifies err into a ConnectionState via
 // classifyConnectionState and records succeededAt only on success.
 func newConnectionStatus(instance model.ProviderInstance, succeededAt time.Time, err error) ConnectionStatus {
-	status := ConnectionStatus{Provider: instance, Err: err, State: classifyConnectionState(err)}
+	status := ConnectionStatus{connectionOutcome: connectionOutcome{Provider: instance, Err: err, State: classifyConnectionState(err)}}
 	if err == nil {
 		status.SucceededAt = succeededAt
 	}
