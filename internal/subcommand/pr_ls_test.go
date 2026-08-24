@@ -51,23 +51,36 @@ func TestParseSortSpec(t *testing.T) {
 	}
 }
 
-func TestConnectionSummaries_MergesFetchedAndConstructFailed(t *testing.T) {
-	statuses := []prsm.ConnectionStatus{
+// TestConnectionSummaries_MapsProviderStatusToSummary covers connectionSummaries'
+// remaining job now that the ConnectionStatus/ConstructError merge itself
+// lives on prsm.Client.ProviderStatuses (see TestProviderStatuses_* in the
+// prsm package): flattening a ProviderStatus's typed Phase/State and Err into
+// the plain strings --format plain and --format json print.
+func TestConnectionSummaries_MapsProviderStatusToSummary(t *testing.T) {
+	providerStatuses := []prsm.ProviderStatus{
 		{
-			Provider: model.ProviderInstance{Name: "github-personal", Kind: model.ProviderGitHub},
-			State:    prsm.ConnectionStateOK,
+			Provider:        "github-personal",
+			Kind:            model.ProviderGitHub,
+			Phase:           prsm.ProviderPhaseConnected,
+			ConnectionState: prsm.ConnectionStateOK,
 		},
 		{
-			Provider: model.ProviderInstance{Name: "github-work", Kind: model.ProviderGitHub},
-			State:    prsm.ConnectionStateOffline,
-			Err:      errors.New("dial tcp: i/o timeout"),
+			Provider:        "github-work",
+			Kind:            model.ProviderGitHub,
+			Phase:           prsm.ProviderPhaseConnected,
+			ConnectionState: prsm.ConnectionStateOffline,
+			Err:             errors.New("dial tcp: i/o timeout"),
 		},
-	}
-	failedProviders := []*prsm.ConstructError{
-		{Provider: "gitlab-work", Kind: model.ProviderGitLab, Reason: prsm.ConstructErrorReasonNotImplemented},
+		{
+			Provider:        "gitlab-work",
+			Kind:            model.ProviderGitLab,
+			Phase:           prsm.ProviderPhaseConstructFailed,
+			ConstructReason: prsm.ConstructErrorReasonNotImplemented,
+			Err:             errors.New(`construct provider "gitlab-work": "gitlab" adapter is not implemented yet`),
+		},
 	}
 
-	summaries := connectionSummaries(statuses, failedProviders)
+	summaries := connectionSummaries(providerStatuses)
 
 	if len(summaries) != 3 {
 		t.Fatalf("got %d summaries, want 3: %+v", len(summaries), summaries)

@@ -82,7 +82,7 @@ func runPRList(cmd *cobra.Command, configPath string, sortSpec query.SortSpec, f
 func writePRListSnapshot(ctx context.Context, writer io.Writer, client *prsm.Client, sortSpec query.SortSpec, format outputFormat) error {
 	snapshot := client.Fetch(ctx)
 	pullRequests := query.Sort(snapshot.PullRequests, sortSpec)
-	connections := connectionSummaries(snapshot.Connections, client.FailedProviders())
+	connections := connectionSummaries(client.ProviderStatuses(snapshot))
 
 	if format == outputFormatJSON {
 		return printSnapshotJSON(writer, snapshot.FetchedAt, pullRequests, connections)
@@ -134,12 +134,13 @@ func parseSortSpec(sortBy string, descending bool) (query.SortSpec, error) {
 	return query.SortSpec{By: query.SortKey(sortBy), Direction: direction}, nil
 }
 
-// connectionSummary unifies a connection's runtime fetch outcome
-// (prsm.ConnectionStatus) with a provider that never became a connection at
-// all (prsm.ConstructError) into one reportable shape — a config typo and a
-// vendor outage are both "why didn't I get PRs from this provider", and ls
-// answers that question the same way for either cause rather than silently
-// dropping providers that failed to construct.
+// connectionSummary is ls's text/JSON shape for one prsm.ProviderStatus —
+// State flattened to its Label() and Err flattened to its Error() string,
+// since both --format plain and --format json render text, not typed Go
+// values. The merge that produces a ProviderStatus per configured provider
+// (connection outcome plus never-constructed providers, in one view) lives on
+// prsm.Client.ProviderStatuses so every consumer shares it; this type only
+// shapes that result for printing here.
 type connectionSummary struct {
 	Provider string `json:"provider"`
 	Kind     string `json:"kind"`
@@ -147,28 +148,19 @@ type connectionSummary struct {
 	Error    string `json:"error,omitempty"`
 }
 
-func connectionSummaries(statuses []prsm.ConnectionStatus, failedProviders []*prsm.ConstructError) []connectionSummary {
-	summaries := make([]connectionSummary, 0, len(statuses)+len(failedProviders))
+func connectionSummaries(providerStatuses []prsm.ProviderStatus) []connectionSummary {
+	summaries := make([]connectionSummary, 0, len(providerStatuses))
 
-	for _, status := range statuses {
+	for _, providerStatus := range providerStatuses {
 		summary := connectionSummary{
-			Provider: status.Provider.Name,
-			Kind:     string(status.Provider.Kind),
-			State:    status.State.Label(),
+			Provider: providerStatus.Provider,
+			Kind:     string(providerStatus.Kind),
+			State:    providerStatus.Label(),
 		}
-		if status.Err != nil {
-			summary.Error = status.Err.Error()
+		if providerStatus.Err != nil {
+			summary.Error = providerStatus.Err.Error()
 		}
 		summaries = append(summaries, summary)
-	}
-
-	for _, constructError := range failedProviders {
-		summaries = append(summaries, connectionSummary{
-			Provider: constructError.Provider,
-			Kind:     string(constructError.Kind),
-			State:    constructError.Reason.Label(),
-			Error:    constructError.Error(),
-		})
 	}
 
 	return summaries
