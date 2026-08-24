@@ -11,7 +11,7 @@ import "github.com/spf13/cobra"
 func PRCommand() *cobra.Command {
 	prCommand := &cobra.Command{
 		Use:     "pr",
-		Aliases: []string{"pullrequest", "pull-request"},
+		Aliases: []string{"prs", "pullrequest", "pullrequests", "pull-request", "pull-requests"},
 		Short:   "Work with pull requests",
 	}
 	prCommand.AddCommand(PRListCommand())

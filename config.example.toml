@@ -1,0 +1,126 @@
+# prsm example configuration
+#
+# A complete, valid reference: one provider per supported vendor (GitHub,
+# GitLab, Gitea) and one named view per filter/sort/group option. It is not
+# meant to be used as-is — copy the sections relevant to you into your own
+# config file and delete the rest.
+#
+# prsm looks for its config at ~/.config/prsm/config.toml by default
+# (respects $XDG_CONFIG_HOME), or at any path passed via --config.
+#
+# Tokens may be written inline or as environment variable references:
+#   token = "ghp_actual_token"   # inline — keep the file chmod 0600
+#   token = "$GITHUB_TOKEN"      # env var reference (expanded at load time)
+#
+# This exact file is loaded by config/load_test.go, so it stays valid
+# against the schema as prsm evolves — if a config field changes shape,
+# this file (and that test) breaks along with it.
+
+[defaults]
+refresh_interval_seconds = 60
+default_view = "my-reviews"
+
+[[providers]]
+name = "github-personal"
+type = "github"
+
+[providers.auth]
+type  = "pat"
+token = "$GITHUB_TOKEN"
+
+[[providers.repos]]
+owner = "acme-corp"
+repo  = "api-service"
+
+[[providers.repos]]
+owner = "acme-corp"
+repo  = "frontend"
+
+[[providers]]
+name     = "gitlab-work"
+type     = "gitlab"
+base_url = "https://gitlab.internal.example.com"
+
+[providers.auth]
+type  = "pat"
+token = "$GITLAB_TOKEN"
+
+[[providers.groups]]
+path = "platform-team"
+
+[[providers]]
+name     = "codeberg"
+type     = "gitea"
+base_url = "https://codeberg.org"
+
+[providers.auth]
+type  = "pat"
+token = "$CODEBERG_TOKEN"
+
+[[providers.repos]]
+owner = "loganstellway"
+repo  = "public-project"
+
+[[views]]
+name        = "my-reviews"
+resource    = "pr"
+description = "PRs where I am a requested reviewer, non-draft only"
+
+[views.filter]
+reviewer = "me"
+draft    = false
+
+[views.sort]
+by        = "updated"
+direction = "desc"
+
+[views.group]
+by = "provider"
+
+[[views]]
+name        = "my-open-prs"
+resource    = "pr"
+description = "All open PRs I authored, newest first"
+
+[views.filter]
+author = "me"
+state  = "open"
+
+[views.sort]
+by        = "created"
+direction = "desc"
+
+[views.group]
+by = "repo"
+
+[[views]]
+name        = "stale-reviews"
+resource    = "pr"
+description = "PRs awaiting my review, untouched for 3+ days"
+
+[views.filter]
+reviewer       = "me"
+draft          = false
+staleness_days = 3
+
+[views.sort]
+by        = "staleness"
+direction = "desc"
+
+[views.group]
+by = "repo"
+
+[[views]]
+name        = "ci-failures"
+resource    = "pr"
+description = "Any open PR in watched repos with a failing pipeline"
+
+[views.filter]
+ci_status = "failing"
+
+[views.sort]
+by        = "updated"
+direction = "desc"
+
+[views.group]
+by = "repo"

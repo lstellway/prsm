@@ -47,4 +47,8 @@ flowchart TD
     Assembly --> Consumers
 ```
 
+## Configuration
+
+prsm reads a TOML config file — see [`config.example.toml`](config.example.toml) for a complete, valid reference covering every provider and view option.
+
 See [`CLAUDE.md`](CLAUDE.md) for the full project overview.
