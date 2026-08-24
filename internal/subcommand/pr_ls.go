@@ -43,7 +43,12 @@ func PRListCommand() *cobra.Command {
 				return err
 			}
 
-			return runPRList(cmd, configPath, sortSpec, format)
+			parsedFormat, err := parseOutputFormat(format)
+			if err != nil {
+				return err
+			}
+
+			return runPRList(cmd, configPath, sortSpec, parsedFormat)
 		},
 	}
 
@@ -54,7 +59,7 @@ func PRListCommand() *cobra.Command {
 	return listCommand
 }
 
-func runPRList(cmd *cobra.Command, configPath string, sortSpec query.SortSpec, format string) error {
+func runPRList(cmd *cobra.Command, configPath string, sortSpec query.SortSpec, format outputFormat) error {
 	prsmConfig, err := config.LoadFile(configPath)
 	if err != nil {
 		return err
@@ -74,20 +79,35 @@ func runPRList(cmd *cobra.Command, configPath string, sortSpec query.SortSpec, f
 // writePRListSnapshot fetches once and writes the result, separated from
 // runPRList so it can be exercised directly against a mock client — no
 // config file, no cobra command, no real network call required.
-func writePRListSnapshot(ctx context.Context, writer io.Writer, client *prsm.Client, sortSpec query.SortSpec, format string) error {
-	if format != "plain" && format != "json" {
-		return fmt.Errorf("--format must be one of: plain, json")
-	}
-
+func writePRListSnapshot(ctx context.Context, writer io.Writer, client *prsm.Client, sortSpec query.SortSpec, format outputFormat) error {
 	snapshot := client.Fetch(ctx)
 	pullRequests := query.Sort(snapshot.PullRequests, sortSpec)
 	connections := connectionSummaries(snapshot.Connections, client.FailedProviders())
 
-	if format == "json" {
+	if format == outputFormatJSON {
 		return printSnapshotJSON(writer, snapshot.FetchedAt, pullRequests, connections)
 	}
 	printSnapshotPlain(writer, pullRequests, connections)
 	return nil
+}
+
+// outputFormat is the closed set of values --format accepts.
+type outputFormat string
+
+const (
+	outputFormatPlain outputFormat = "plain"
+	outputFormatJSON  outputFormat = "json"
+)
+
+// parseOutputFormat validates the --format flag up front — before any config
+// load or network call — the same way parseSortSpec validates --sort.
+func parseOutputFormat(format string) (outputFormat, error) {
+	switch outputFormat(format) {
+	case outputFormatPlain, outputFormatJSON:
+		return outputFormat(format), nil
+	default:
+		return "", fmt.Errorf("--format must be one of: plain, json")
+	}
 }
 
 // parseSortSpec turns the --sort/--desc flag pair into a query.SortSpec.
@@ -134,7 +154,7 @@ func connectionSummaries(statuses []prsm.ConnectionStatus, failedProviders []*pr
 		summary := connectionSummary{
 			Provider: status.Provider.Name,
 			Kind:     string(status.Provider.Kind),
-			State:    connectionStateLabel(status.State),
+			State:    status.State.Label(),
 		}
 		if status.Err != nil {
 			summary.Error = status.Err.Error()
@@ -146,42 +166,12 @@ func connectionSummaries(statuses []prsm.ConnectionStatus, failedProviders []*pr
 		summaries = append(summaries, connectionSummary{
 			Provider: constructError.Provider,
 			Kind:     string(constructError.Kind),
-			State:    constructErrorLabel(constructError.Reason),
+			State:    constructError.Reason.Label(),
 			Error:    constructError.Error(),
 		})
 	}
 
 	return summaries
-}
-
-func connectionStateLabel(state prsm.ConnectionState) string {
-	switch state {
-	case prsm.ConnectionStateOK:
-		return "ok"
-	case prsm.ConnectionStateOffline:
-		return "offline"
-	case prsm.ConnectionStateRateLimited:
-		return "rate_limited"
-	case prsm.ConnectionStateUnauthorized:
-		return "unauthorized"
-	default:
-		return "unknown"
-	}
-}
-
-func constructErrorLabel(reason prsm.ConstructErrorReason) string {
-	switch reason {
-	case prsm.ConstructErrorReasonUnknownType:
-		return "unknown_type"
-	case prsm.ConstructErrorReasonNotImplemented:
-		return "not_implemented"
-	case prsm.ConstructErrorReasonDuplicateName:
-		return "duplicate_name"
-	case prsm.ConstructErrorReasonFailed:
-		return "construct_failed"
-	default:
-		return "unknown"
-	}
 }
 
 // printSnapshotPlain writes one tab-separated line per pull request, followed

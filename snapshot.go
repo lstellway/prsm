@@ -63,6 +63,27 @@ func (connectionState ConnectionState) String() string {
 	}
 }
 
+// Label returns the short, stable, lowercase name a consumer-facing surface
+// (CLI output, JSON) should print for this state — unlike String, which is
+// meant for Go-facing debug/error text. Every known ConnectionState has a
+// Label; only the zero value falls through to "unknown", since a
+// ConnectionStatus should never carry ConnectionStateUnknown in the first
+// place (see its doc comment).
+func (connectionState ConnectionState) Label() string {
+	switch connectionState {
+	case ConnectionStateOK:
+		return "ok"
+	case ConnectionStateOffline:
+		return "offline"
+	case ConnectionStateRateLimited:
+		return "rate_limited"
+	case ConnectionStateUnauthorized:
+		return "unauthorized"
+	default:
+		return "unknown"
+	}
+}
+
 // ConnectionStatus reports one connection's outcome for the Fetch call that
 // produced the enclosing PullRequestSnapshot.
 type ConnectionStatus struct {

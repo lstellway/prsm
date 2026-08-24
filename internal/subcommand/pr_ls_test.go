@@ -180,11 +180,12 @@ func TestPrintSnapshotJSON_RoundTrips(t *testing.T) {
 	}
 }
 
-// TestRunPRList_DegradedConnectionExitsCleanly is the behavior issue #14
-// hinges on: a connection that fails must still produce a zero-value error
-// from the command (cobra maps a non-nil RunE error to a nonzero exit code),
-// with the failure surfaced in the connections block instead.
-func TestRunPRList_DegradedConnectionExitsCleanly(t *testing.T) {
+// TestWritePRListSnapshot_DegradedConnectionExitsCleanly is the behavior
+// issue #14 hinges on: a connection that fails must still produce a
+// zero-value error from the command (cobra maps a non-nil RunE error to a
+// nonzero exit code), with the failure surfaced in the connections block
+// instead.
+func TestWritePRListSnapshot_DegradedConnectionExitsCleanly(t *testing.T) {
 	client := prsm.NewWithConnections(
 		&mock.PullRequestSource{
 			Connection:      mock.Connection{InstanceVal: model.ProviderInstance{Name: "github-personal", Kind: model.ProviderGitHub}},
@@ -193,7 +194,7 @@ func TestRunPRList_DegradedConnectionExitsCleanly(t *testing.T) {
 	)
 
 	var buffer bytes.Buffer
-	if err := writePRListSnapshot(context.Background(), &buffer, client, query.SortSpec{}, "plain"); err != nil {
+	if err := writePRListSnapshot(context.Background(), &buffer, client, query.SortSpec{}, outputFormatPlain); err != nil {
 		t.Fatalf("expected nil error for a degraded (not fatal) connection, got %v", err)
 	}
 
@@ -203,11 +204,34 @@ func TestRunPRList_DegradedConnectionExitsCleanly(t *testing.T) {
 	}
 }
 
-func TestRunPRList_InvalidFormatIsFatal(t *testing.T) {
-	client := prsm.NewWithConnections()
-	var buffer bytes.Buffer
-	err := writePRListSnapshot(context.Background(), &buffer, client, query.SortSpec{}, "yaml")
-	if err == nil {
-		t.Fatal("expected an error for an unrecognized --format value")
+func TestParseOutputFormat(t *testing.T) {
+	testCases := []struct {
+		name    string
+		format  string
+		want    outputFormat
+		wantErr bool
+	}{
+		{name: "plain", format: "plain", want: outputFormatPlain},
+		{name: "json", format: "json", want: outputFormatJSON},
+		{name: "unrecognized value is an error", format: "yaml", wantErr: true},
+		{name: "empty value is an error", format: "", wantErr: true},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got, err := parseOutputFormat(testCase.format)
+			if testCase.wantErr {
+				if err == nil {
+					t.Fatalf("expected an error, got %q", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != testCase.want {
+				t.Errorf("got %q, want %q", got, testCase.want)
+			}
+		})
 	}
 }
