@@ -11,13 +11,17 @@ func TestProviderStatuses_MergesConnectedAndConstructFailed(t *testing.T) {
 	snapshot := PullRequestSnapshot{
 		Connections: []ConnectionStatus{
 			{
-				Provider: model.ProviderInstance{Name: "github-personal", Kind: model.ProviderGitHub},
-				State:    ConnectionStateOK,
+				connectionOutcome: connectionOutcome{
+					Provider: model.ProviderInstance{Name: "github-personal", Kind: model.ProviderGitHub},
+					State:    ConnectionStateOK,
+				},
 			},
 			{
-				Provider: model.ProviderInstance{Name: "github-work", Kind: model.ProviderGitHub},
-				State:    ConnectionStateOffline,
-				Err:      errors.New("dial tcp: i/o timeout"),
+				connectionOutcome: connectionOutcome{
+					Provider: model.ProviderInstance{Name: "github-work", Kind: model.ProviderGitHub},
+					State:    ConnectionStateOffline,
+					Err:      errors.New("dial tcp: i/o timeout"),
+				},
 			},
 		},
 	}

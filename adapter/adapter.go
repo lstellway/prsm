@@ -73,7 +73,19 @@ type PullRequestSource interface {
 //     "me" identity
 //   - implemented, call failed — the credential is bad, expired, or revoked
 //   - implemented, resolved — contributes the "me" identity for this instance
+//
+// It embeds Connection — like PullRequestSource — so every IdentityResolver
+// can name the instance it resolved without a separate, runtime-only cast
+// back to Connection.
+//
+// Every implementation must return promptly once ctx is cancelled or its
+// deadline passes, mirroring PullRequestSource: prsm.Client.ResolveIdentities
+// fans ResolveIdentity out across every IdentityResolver concurrently and
+// waits for all of them, so one implementation that ignores ctx makes the
+// whole fan-out unresponsive to cancellation, not just its own call.
 type IdentityResolver interface {
+	Connection
+
 	// ResolveIdentity returns the authenticated user's identity for this connection.
 	// Called once at startup to resolve "me" sentinels in filters.
 	// The result is the authenticated account, represented as a model.Identity.
