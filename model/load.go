@@ -1,5 +1,7 @@
 package model
 
+import "encoding/json"
+
 // LoadState is the fetch lifecycle of a lazy-loaded field.
 type LoadState uint8
 
@@ -60,4 +62,52 @@ func (loadResult LoadResult[T]) UnwrapOr(fallback T) T {
 		return loadResult.value
 	}
 	return fallback
+}
+
+func (loadState LoadState) String() string {
+	switch loadState {
+	case LoadStatePending:
+		return "pending"
+	case LoadStateLoaded:
+		return "loaded"
+	case LoadStateAbsent:
+		return "absent"
+	case LoadStateError:
+		return "error"
+	default:
+		return "unknown"
+	}
+}
+
+// MarshalJSON encodes the state as its String() name rather than the
+// underlying uint8, so JSON output reads "loaded" instead of "1".
+func (loadState LoadState) MarshalJSON() ([]byte, error) {
+	return json.Marshal(loadState.String())
+}
+
+// loadResultJSON is the wire shape for a LoadResult[T]. Value is `any`
+// rather than T so a Loaded zero value (e.g. CommentCount 0) still encodes
+// as 0, while a genuinely absent value omits the field entirely — a generic
+// T field could not distinguish the two, since omitempty treats every T's
+// own zero value as empty.
+type loadResultJSON struct {
+	State LoadState `json:"state"`
+	Value any       `json:"value,omitempty"`
+	Error string    `json:"error,omitempty"`
+}
+
+// MarshalJSON encodes the field's fetch lifecycle explicitly rather than
+// falling through to the zero-value default a plain struct tag would produce
+// for value/err — both of which are unexported and would otherwise vanish
+// from JSON output entirely, silently reporting every lazy-loaded field as
+// an empty object regardless of its actual state.
+func (loadResult LoadResult[T]) MarshalJSON() ([]byte, error) {
+	document := loadResultJSON{State: loadResult.state}
+	if loadResult.state == LoadStateLoaded {
+		document.Value = loadResult.value
+	}
+	if loadResult.state == LoadStateError && loadResult.err != nil {
+		document.Error = loadResult.err.Error()
+	}
+	return json.Marshal(document)
 }
