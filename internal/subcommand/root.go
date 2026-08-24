@@ -9,6 +9,7 @@ func Root() *cobra.Command {
 		Short: "PR inbox for engineers on fast-moving teams",
 		RunE:  tuiCommand.RunE,
 	}
-	rootCommand.AddCommand(tuiCommand, ServeCommand(), VersionCommand())
+	rootCommand.PersistentFlags().String("config", "", "path to the prsm config file (default: XDG config path)")
+	rootCommand.AddCommand(tuiCommand, ServeCommand(), VersionCommand(), PRCommand())
 	return rootCommand
 }

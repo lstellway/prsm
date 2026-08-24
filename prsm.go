@@ -74,6 +74,26 @@ func (reason ConstructErrorReason) String() string {
 	}
 }
 
+// Label returns the short, stable, lowercase name a consumer-facing surface
+// (CLI output, JSON) should print for this reason — unlike String, which is
+// meant for Go-facing debug/error text. Every known ConstructErrorReason has
+// a Label; an unrecognized value (unreachable outside a hand-built
+// ConstructError) falls through to "unknown".
+func (reason ConstructErrorReason) Label() string {
+	switch reason {
+	case ConstructErrorReasonUnknownType:
+		return "unknown_type"
+	case ConstructErrorReasonNotImplemented:
+		return "not_implemented"
+	case ConstructErrorReasonDuplicateName:
+		return "duplicate_name"
+	case ConstructErrorReasonFailed:
+		return "construct_failed"
+	default:
+		return "unknown"
+	}
+}
+
 // ConstructError describes one provider that failed to construct, collected
 // on Client.FailedProviders. Its four Reasons are the exhaustive,
 // mutually-exclusive output of one function (constructConnection, plus the

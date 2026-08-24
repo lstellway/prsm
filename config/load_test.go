@@ -9,119 +9,6 @@ import (
 	"github.com/lstellway/prsm/config"
 )
 
-// annotatedExampleConfig is the complete annotated example config.
-// Env var references are resolved via os.Setenv in the test setup.
-const annotatedExampleConfig = `
-[defaults]
-refresh_interval_seconds = 60
-default_view = "my-reviews"
-
-[[providers]]
-name = "github-personal"
-type = "github"
-
-[providers.auth]
-type  = "pat"
-token = "$PRSM_TEST_GITHUB_TOKEN"
-
-[[providers.repos]]
-owner = "acme-corp"
-repo  = "api-service"
-
-[[providers.repos]]
-owner = "acme-corp"
-repo  = "frontend"
-
-[[providers]]
-name     = "gitlab-work"
-type     = "gitlab"
-base_url = "https://gitlab.internal.example.com"
-
-[providers.auth]
-type  = "pat"
-token = "$PRSM_TEST_GITLAB_TOKEN"
-
-[[providers.groups]]
-path = "platform-team"
-
-[[providers]]
-name     = "codeberg"
-type     = "gitea"
-base_url = "https://codeberg.org"
-
-[providers.auth]
-type  = "pat"
-token = "$PRSM_TEST_CODEBERG_TOKEN"
-
-[[providers.repos]]
-owner = "loganstellway"
-repo  = "public-project"
-
-[[views]]
-name        = "my-reviews"
-resource    = "pr"
-description = "PRs where I am a requested reviewer, non-draft only"
-
-[views.filter]
-reviewer = "me"
-draft    = false
-
-[views.sort]
-by        = "updated"
-direction = "desc"
-
-[views.group]
-by = "provider"
-
-[[views]]
-name        = "my-open-prs"
-resource    = "pr"
-description = "All open PRs I authored, newest first"
-
-[views.filter]
-author = "me"
-state  = "open"
-
-[views.sort]
-by        = "created"
-direction = "desc"
-
-[views.group]
-by = "repo"
-
-[[views]]
-name        = "stale-reviews"
-resource    = "pr"
-description = "PRs awaiting my review, untouched for 3+ days"
-
-[views.filter]
-reviewer       = "me"
-draft          = false
-staleness_days = 3
-
-[views.sort]
-by        = "staleness"
-direction = "desc"
-
-[views.group]
-by = "repo"
-
-[[views]]
-name        = "ci-failures"
-resource    = "pr"
-description = "Any open PR in watched repos with a failing pipeline"
-
-[views.filter]
-ci_status = "failing"
-
-[views.sort]
-by        = "updated"
-direction = "desc"
-
-[views.group]
-by = "repo"
-`
-
 func writeTemp(t *testing.T, content string) string {
 	t.Helper()
 	directory := t.TempDir()
@@ -132,14 +19,17 @@ func writeTemp(t *testing.T, content string) string {
 	return path
 }
 
-// TestLoadFile_AnnotatedExampleConfig verifies the complete example config
-// loads and validates without error.
-func TestLoadFile_AnnotatedExampleConfig(t *testing.T) {
-	t.Setenv("PRSM_TEST_GITHUB_TOKEN", "ghp_fake")
-	t.Setenv("PRSM_TEST_GITLAB_TOKEN", "glpat_fake")
-	t.Setenv("PRSM_TEST_CODEBERG_TOKEN", "cb_fake")
+// TestLoadFile_ExampleConfig verifies ../config.example.toml — the repo's
+// committed reference config — loads and validates without error. It loads
+// the file directly from its repo path rather than a copy, so this test is
+// what keeps the example honest as the schema evolves: a config field that
+// changes shape breaks this test, not just the documentation.
+func TestLoadFile_ExampleConfig(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "ghp_fake")
+	t.Setenv("GITLAB_TOKEN", "glpat_fake")
+	t.Setenv("CODEBERG_TOKEN", "cb_fake")
 
-	loadedConfig, err := config.LoadFile(writeTemp(t, annotatedExampleConfig))
+	loadedConfig, err := config.LoadFile("../config.example.toml")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

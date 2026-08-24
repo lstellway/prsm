@@ -155,7 +155,7 @@ Decisions are tracked in GitHub Issues, not a docs directory.
 
 ## Current State
 
-**Not wired into any consumer yet.** The layers below are built and tested in isolation; the assembly layer now constructs adapters from config, but no consumer wires a constructed adapter into a running command yet — `prsm tui` still prints "not yet implemented."
+**`prsm pr ls` is the first consumer wired end to end** — real config file, real adapter, one real `Client.Fetch` call, printed to stdout, exiting 0 even when a connection is degraded. `prsm tui` still prints "not yet implemented."
 
 | Package | Status | Description |
 |---|---|---|
@@ -168,7 +168,7 @@ Decisions are tracked in GitHub Issues, not a docs directory.
 | `query/` | Done | Filter, sort, group, fuzzy match, `Apply` pipeline — implemented and tested |
 | `prsm` (root) | Partial | Assembly layer — `New`/`NewWithConnections` construct connections from config and index them by resource-kind interface via type assertion, with typed `ConstructError`s and a `FailedProviders` accessor for partial failures. `Client.Fetch` fans `ListPullRequests` out across every `PullRequestSource` concurrently and returns a stateless `PullRequestSnapshot` (pull requests plus one `ConnectionStatus` — OK/Offline/RateLimited/Unauthorized — per connection); it carries no memory of earlier calls, so cross-call history is the poll loop's job. Named per-resource-kind — a future `Client.FetchActions` would return its own sibling snapshot type, not a shared fat one — since `ConnectionStatus` is already resource-kind-agnostic but the fetched payload is not. GitHub only; `gitlab`/`gitea` provider types produce a construction error until those adapters exist. Identity resolution and the poll loop are not yet built |
 | `client/` | Reserved | Reserved for the wire API's Go SDK (`doc.go` only; no code yet) |
-| `internal/subcommand/` | Partial | cobra commands — `tui`, `serve`, `version`; `tui` and `serve` are not yet implemented |
+| `internal/subcommand/` | Partial | cobra commands — `tui`, `serve`, `version`, `pr` (aliases `pullrequest`/`pull-request`). `pr ls` (alias `list`) is the one fully working command: loads config, calls `prsm.New` + `Client.Fetch`, prints pull requests plus a per-connection status block in `--format plain\|json`, with `--sort`/`--desc` reusing `query.Sort`. `--config` is a persistent root flag. `tui` and `serve` are not yet implemented |
 | `cmd/prsm/` | Done | Thin `main` delegating to `internal/subcommand` |
 | `api/proto/` | Stub | `prsm.v1` package declared; no services or RPCs defined, no codegen configured |
 | `event/` | Stub | Event engine (planned v1.1) |
