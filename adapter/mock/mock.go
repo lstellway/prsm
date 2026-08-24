@@ -68,11 +68,18 @@ func (mockSource *PullRequestSource) LoadDiff(_ context.Context, _ model.PullReq
 // IdentityResolver resolves an identity. It carries no Connection of its own so
 // that it composes with any source; embed it beside one.
 type IdentityResolver struct {
+	// Delay, when nonzero, makes ResolveIdentity sleep before returning — for
+	// tests that need to observe real concurrent timing, mirroring
+	// PullRequestSource.Delay.
+	Delay       time.Duration
 	Identity    model.Identity
 	IdentityErr error
 }
 
 func (mockResolver *IdentityResolver) ResolveIdentity(_ context.Context) (model.Identity, error) {
+	if mockResolver.Delay > 0 {
+		time.Sleep(mockResolver.Delay)
+	}
 	return mockResolver.Identity, mockResolver.IdentityErr
 }
 

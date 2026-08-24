@@ -167,28 +167,39 @@ func (client *Client) Fetch(ctx context.Context) PullRequestSnapshot {
 	}
 }
 
-// newConnectionStatus classifies err into a ConnectionState. A RateLimitError
-// or AuthError anywhere in err — including inside an errors.Join result, as
-// GitHub's per-repo aggregation produces — takes priority over the generic
-// Offline bucket, since both carry a more specific, more actionable meaning
-// than "something went wrong."
+// newConnectionStatus classifies err into a ConnectionState via
+// classifyConnectionState and records succeededAt only on success.
 func newConnectionStatus(instance model.ProviderInstance, succeededAt time.Time, err error) ConnectionStatus {
-	status := ConnectionStatus{Provider: instance, Err: err}
+	status := ConnectionStatus{Provider: instance, Err: err, State: classifyConnectionState(err)}
 	if err == nil {
-		status.State = ConnectionStateOK
 		status.SucceededAt = succeededAt
-		return status
+	}
+	return status
+}
+
+// classifyConnectionState maps err into the ConnectionState it represents.
+// Shared by newConnectionStatus (Fetch) and newIdentityStatus
+// (Client.ResolveIdentities, in identity.go): both wrap a call to a vendor
+// API and fail the same three ways, even though the two calls run on
+// different schedules and are never merged into one result type.
+//
+// A RateLimitError or AuthError anywhere in err — including inside an
+// errors.Join result, as GitHub's per-repo aggregation produces — takes
+// priority over the generic Offline bucket, since both carry a more
+// specific, more actionable meaning than "something went wrong."
+func classifyConnectionState(err error) ConnectionState {
+	if err == nil {
+		return ConnectionStateOK
 	}
 
 	var rateLimitErr adapter.RateLimitError
 	var authErr adapter.AuthError
 	switch {
 	case errors.As(err, &rateLimitErr):
-		status.State = ConnectionStateRateLimited
+		return ConnectionStateRateLimited
 	case errors.As(err, &authErr):
-		status.State = ConnectionStateUnauthorized
+		return ConnectionStateUnauthorized
 	default:
-		status.State = ConnectionStateOffline
+		return ConnectionStateOffline
 	}
-	return status
 }
