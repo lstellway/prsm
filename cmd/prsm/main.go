@@ -1,3 +1,5 @@
+// Command prsm is the CLI entry point; it delegates entirely to
+// internal/subcommand.Root().
 package main
 
 import (

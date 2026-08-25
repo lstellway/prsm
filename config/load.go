@@ -8,6 +8,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/lstellway/prsm/model"
+	"github.com/lstellway/prsm/query"
 )
 
 // LoadFile decodes and validates a TOML config file. If path is empty the XDG
@@ -206,8 +207,9 @@ func validate(loadedConfig *Config, originalTokens, originalPasswords []string) 
 			if view.Filter.ReviewStatus != "" {
 				return fmt.Errorf("config: view %q: filter.review_status is not valid for resource %q", view.Name, view.Resource)
 			}
-			if view.Group.By == "review_status" {
-				return fmt.Errorf("config: view %q: group.by %q is not valid for resource %q", view.Name, view.Group.By, view.Resource)
+			groupSpec := query.GroupSpec{By: query.GroupKey(view.Group.By)}
+			if err := groupSpec.ValidateForResource(view.Resource); err != nil {
+				return fmt.Errorf("config: view %q: %w", view.Name, err)
 			}
 		}
 	}

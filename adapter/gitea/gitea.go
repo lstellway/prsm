@@ -1,3 +1,9 @@
+// Package gitea will implement prsm's provider adapter for Gitea, Forgejo, and
+// Codeberg instances — one adapter covering all three, since Codeberg is a
+// Forgejo instance and the two vendors' APIs have not diverged enough yet to
+// need separate adapters. Only the vendor-local Config and RepoRef types exist
+// today; the GiteaAdapter implementing adapter.PullRequestSource has not been
+// built yet — see adapter/github for the reference shape this package will follow.
 package gitea
 
 // RepoRef identifies a repository to poll. Gitea inherits GitHub's owner/repo

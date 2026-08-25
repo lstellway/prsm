@@ -1,3 +1,8 @@
+// Package gitlab will implement prsm's provider adapter for GitLab.com and
+// self-hosted GitLab. Only the vendor-local Config, ProjectRef, and GroupRef
+// types exist today; the GitLabAdapter implementing adapter.PullRequestSource
+// has not been built yet — see adapter/github for the reference shape this
+// package will follow.
 package gitlab
 
 // ProjectRef identifies a GitLab project to poll. GitLab calls a repository a
