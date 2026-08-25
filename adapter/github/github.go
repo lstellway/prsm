@@ -14,12 +14,22 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	gogithub "github.com/google/go-github/v88/github"
 	"github.com/lstellway/prsm/model"
 )
 
 const defaultAPIBaseURL = "https://api.github.com"
+
+// defaultPaginationTimeout bounds a whole paginated operation (all pages,
+// not one request) when Config.PaginationTimeout is unset. It matches the
+// 30s per-request http.Client timeout in newHTTPClient — tolerating one
+// fully slow page before bailing — rather than a larger multiple: a GitHub
+// connection with several configured repos pays this deadline once per repo
+// in a plain sequential loop (see ListPullRequests), so a looser per-repo
+// budget compounds quickly across a poll tick.
+const defaultPaginationTimeout = 30 * time.Second
 
 // RepoRef identifies a repository to poll. Owner/repo pairs are GitHub's own
 // addressing vocabulary, so the type lives here rather than in the shared
@@ -38,15 +48,20 @@ type Config struct {
 	Token   string
 	BaseURL string
 	Repos   []RepoRef
+	// PaginationTimeout bounds how long one paginating operation
+	// (ListPullRequests per repo, LoadCI, LoadReviewerStates) may run across
+	// all of its pages. Zero means "use defaultPaginationTimeout".
+	PaginationTimeout time.Duration
 }
 
 // GitHubAdapter is the prsm provider adapter for GitHub.
 // It is safe for concurrent use and must not be copied once constructed.
 type GitHubAdapter struct {
-	providerName string
-	instance     model.ProviderInstance // immutable after New(); Account is excluded
-	repos        []RepoRef
-	rest         *gogithub.Client
+	providerName      string
+	instance          model.ProviderInstance // immutable after New(); Account is excluded
+	repos             []RepoRef
+	rest              *gogithub.Client
+	paginationTimeout time.Duration
 
 	// mutex guards state resolved after construction. The assembly layer
 	// resolves identity at startup while fetches are already fanning out, so
@@ -99,9 +114,22 @@ func New(adapterConfig Config) (*GitHubAdapter, error) {
 		// Cloned so a caller mutating its own slice after New() cannot reach
 		// adapter state. New() is callable without the config layer, so the
 		// caller is not guaranteed to hand over a freshly built slice.
-		repos: slices.Clone(adapterConfig.Repos),
-		rest:  restClient,
+		repos:             slices.Clone(adapterConfig.Repos),
+		rest:              restClient,
+		paginationTimeout: adapterConfig.PaginationTimeout,
 	}, nil
+}
+
+// effectivePaginationTimeout returns the deadline a paginated operation
+// should run under: the configured PaginationTimeout, or
+// defaultPaginationTimeout when that was left unset (zero value) — including
+// when a GitHubAdapter is constructed directly as a struct literal, bypassing
+// New(), a path this package's own tests use.
+func (githubAdapter *GitHubAdapter) effectivePaginationTimeout() time.Duration {
+	if githubAdapter.paginationTimeout <= 0 {
+		return defaultPaginationTimeout
+	}
+	return githubAdapter.paginationTimeout
 }
 
 // Instance returns the full ProviderInstance this adapter serves.
@@ -163,11 +191,30 @@ func (githubAdapter *GitHubAdapter) ListPullRequests(ctx context.Context) ([]mod
 	return allPullRequests, errors.Join(fetchErrors...)
 }
 
+// paginationError builds the error for a page-fetch failure inside a
+// paginated loop. ctx is the operation-scoped context returned by
+// context.WithTimeout, so ctx.Err() is non-nil exactly when that deadline (or
+// an outer cancellation) is what stopped the loop; the message says so
+// explicitly in that case. err is preserved via %w either way, so
+// errors.Is/As — including reaching context.DeadlineExceeded,
+// adapter.RateLimitError, or adapter.AuthError — still works through the
+// result.
+func paginationError(ctx context.Context, timeout time.Duration, prefix string, page int, err error) error {
+	if ctx.Err() != nil {
+		return fmt.Errorf("%s: exceeded %s pagination timeout after %d page(s): %w", prefix, timeout, page, err)
+	}
+	return fmt.Errorf("%s: %w", prefix, err)
+}
+
 func (githubAdapter *GitHubAdapter) listRepoPullRequests(
 	ctx context.Context, owner, repo string,
 ) ([]model.PullRequest, error) {
 	// 50 pages × 100 PRs = 5,000 PRs maximum per repo per call.
 	const maxPages = 50
+
+	paginationTimeout := githubAdapter.effectivePaginationTimeout()
+	ctx, cancel := context.WithTimeout(ctx, paginationTimeout)
+	defer cancel()
 
 	listOptions := &gogithub.PullRequestListOptions{
 		State:       "open",
@@ -178,20 +225,20 @@ func (githubAdapter *GitHubAdapter) listRepoPullRequests(
 	// rather than later pages picking up an identity resolved mid-fetch.
 	instance := githubAdapter.Instance()
 
+	prefix := fmt.Sprintf("github %q: list PRs %s/%s", githubAdapter.providerName, owner, repo)
+
 	var allPullRequests []model.PullRequest
 	for page := 1; ; page++ {
 		if page > maxPages {
-			return nil, fmt.Errorf("github %q: list PRs %s/%s: exceeded %d-page limit",
-				githubAdapter.providerName, owner, repo, maxPages)
+			return allPullRequests, fmt.Errorf("%s: exceeded %d-page limit", prefix, maxPages)
 		}
 
 		pullRequestPage, response, err := githubAdapter.rest.PullRequests.List(ctx, owner, repo, listOptions)
 		if err != nil {
-			return nil, fmt.Errorf("github %q: list PRs %s/%s: %w",
-				githubAdapter.providerName, owner, repo, err)
+			return allPullRequests, paginationError(ctx, paginationTimeout, prefix, page, err)
 		}
 		if rateLimitErr := checkRateLimit(instance, response.Response); rateLimitErr != nil {
-			return nil, rateLimitErr
+			return allPullRequests, rateLimitErr
 		}
 
 		for _, pullRequest := range pullRequestPage {
@@ -208,6 +255,10 @@ func (githubAdapter *GitHubAdapter) listRepoPullRequests(
 }
 
 // LoadCI fetches CI/check-run status for a PR's head commit via REST.
+// The whole paginated fetch is bounded by Config.PaginationTimeout; if a page
+// fails or the deadline fires partway through, the status returned still
+// summarizes whichever check runs were fetched before that point, alongside
+// the error describing why pagination stopped.
 func (githubAdapter *GitHubAdapter) LoadCI(
 	ctx context.Context, pullRequestRef model.PullRequestRef,
 ) (model.CIStatus, error) {
@@ -218,24 +269,29 @@ func (githubAdapter *GitHubAdapter) LoadCI(
 	// 50 pages × 100 runs = 5,000 check runs maximum per SHA.
 	const maxPages = 50
 
+	paginationTimeout := githubAdapter.effectivePaginationTimeout()
+	ctx, cancel := context.WithTimeout(ctx, paginationTimeout)
+	defer cancel()
+
 	listOptions := &gogithub.ListCheckRunsOptions{
 		ListOptions: gogithub.ListOptions{PerPage: 100},
 	}
 
+	prefix := fmt.Sprintf("github %q: load CI for %s#%d",
+		githubAdapter.providerName, pullRequestRef.Repo.Name, pullRequestRef.Number)
+
 	var allCheckRuns []*gogithub.CheckRun
 	for page := 1; ; page++ {
 		if page > maxPages {
-			return model.CIStatus{}, fmt.Errorf("github %q: load CI for %s#%d: exceeded %d-page limit",
-				githubAdapter.providerName, pullRequestRef.Repo.Name, pullRequestRef.Number, maxPages)
+			return normalizeCIStatus(allCheckRuns), fmt.Errorf("%s: exceeded %d-page limit", prefix, maxPages)
 		}
 		checkRunsResponse, response, err := githubAdapter.rest.Checks.ListCheckRunsForRef(
 			ctx, pullRequestRef.Repo.Owner, pullRequestRef.Repo.Name, pullRequestRef.HeadSHA, listOptions)
 		if err != nil {
-			return model.CIStatus{}, fmt.Errorf("github %q: load CI for %s#%d: %w",
-				githubAdapter.providerName, pullRequestRef.Repo.Name, pullRequestRef.Number, err)
+			return normalizeCIStatus(allCheckRuns), paginationError(ctx, paginationTimeout, prefix, page, err)
 		}
 		if rateLimitErr := checkRateLimit(githubAdapter.Instance(), response.Response); rateLimitErr != nil {
-			return model.CIStatus{}, rateLimitErr
+			return normalizeCIStatus(allCheckRuns), rateLimitErr
 		}
 		allCheckRuns = append(allCheckRuns, checkRunsResponse.CheckRuns...)
 		if response.NextPage == 0 {
@@ -248,28 +304,37 @@ func (githubAdapter *GitHubAdapter) LoadCI(
 }
 
 // LoadReviewerStates fetches individual review decisions for a PR via REST.
+// The whole paginated fetch is bounded by Config.PaginationTimeout; if a page
+// fails or the deadline fires partway through, the states returned still
+// reflect whichever reviews were fetched before that point, alongside the
+// error describing why pagination stopped.
 func (githubAdapter *GitHubAdapter) LoadReviewerStates(
 	ctx context.Context, pullRequestRef model.PullRequestRef,
 ) ([]model.ReviewerState, error) {
 	// 50 pages × 100 reviews = 5,000 reviews maximum per PR.
 	const maxPages = 50
 
+	paginationTimeout := githubAdapter.effectivePaginationTimeout()
+	ctx, cancel := context.WithTimeout(ctx, paginationTimeout)
+	defer cancel()
+
 	listOptions := &gogithub.ListOptions{PerPage: 100}
 	var allReviews []*gogithub.PullRequestReview
 
+	prefix := fmt.Sprintf("github %q: load reviews for %s#%d",
+		githubAdapter.providerName, pullRequestRef.Repo.Name, pullRequestRef.Number)
+
 	for page := 1; ; page++ {
 		if page > maxPages {
-			return nil, fmt.Errorf("github %q: load reviews for %s#%d: exceeded %d-page limit",
-				githubAdapter.providerName, pullRequestRef.Repo.Name, pullRequestRef.Number, maxPages)
+			return normalizeReviewerStates(allReviews), fmt.Errorf("%s: exceeded %d-page limit", prefix, maxPages)
 		}
 		reviewPage, response, err := githubAdapter.rest.PullRequests.ListReviews(
 			ctx, pullRequestRef.Repo.Owner, pullRequestRef.Repo.Name, pullRequestRef.Number, listOptions)
 		if err != nil {
-			return nil, fmt.Errorf("github %q: load reviews for %s#%d: %w",
-				githubAdapter.providerName, pullRequestRef.Repo.Name, pullRequestRef.Number, err)
+			return normalizeReviewerStates(allReviews), paginationError(ctx, paginationTimeout, prefix, page, err)
 		}
 		if rateLimitErr := checkRateLimit(githubAdapter.Instance(), response.Response); rateLimitErr != nil {
-			return nil, rateLimitErr
+			return normalizeReviewerStates(allReviews), rateLimitErr
 		}
 		allReviews = append(allReviews, reviewPage...)
 		if response.NextPage == 0 {

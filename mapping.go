@@ -1,6 +1,8 @@
 package prsm
 
 import (
+	"time"
+
 	adaptergitea "github.com/lstellway/prsm/adapter/gitea"
 	adaptergithub "github.com/lstellway/prsm/adapter/github"
 	adaptergitlab "github.com/lstellway/prsm/adapter/gitlab"
@@ -56,11 +58,19 @@ func toGroupRefs(groupRefs []config.GroupRef) []adaptergitlab.GroupRef {
 // Groups and basic-auth credentials have no GitHub equivalent and are dropped.
 func githubConfig(providerConfig config.ProviderConfig) adaptergithub.Config {
 	return adaptergithub.Config{
-		Name:    providerConfig.Name,
-		Token:   providerConfig.Auth.Token,
-		BaseURL: providerConfig.BaseURL,
-		Repos:   toScopeRefs(providerConfig.Repos, githubRepoRef),
+		Name:              providerConfig.Name,
+		Token:             providerConfig.Auth.Token,
+		BaseURL:           providerConfig.BaseURL,
+		Repos:             toScopeRefs(providerConfig.Repos, githubRepoRef),
+		PaginationTimeout: paginationTimeout(providerConfig.PaginationTimeoutSeconds),
 	}
+}
+
+// paginationTimeout converts a config seconds value into a time.Duration,
+// leaving it at zero when unset so the adapter applies its own default —
+// config.LoadFile already rejects negative values before this is called.
+func paginationTimeout(seconds int) time.Duration {
+	return time.Duration(seconds) * time.Second
 }
 
 // gitlabConfig maps a config.ProviderConfig to the GitLab adapter's Config type.
