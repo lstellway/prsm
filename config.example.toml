@@ -37,7 +37,7 @@ type = "github"            # "github" | "gitlab" | "gitea" — selects which ada
 # whatever it already fetched, plus an error. Optional; defaults to 30
 # seconds when omitted. Raise it for a connection known to be slow, e.g. an
 # overloaded self-hosted instance.
-pagination_timeout_seconds = 90
+pagination_timeout_seconds = 30
 
 [providers.auth]
 type  = "pat"             # "pat" | "oauth" | "basic" — pat and oauth are equivalent; basic is Gitea-only and breaks under 2FA

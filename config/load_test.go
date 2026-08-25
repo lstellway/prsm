@@ -46,8 +46,8 @@ func TestLoadFile_ExampleConfig(t *testing.T) {
 	if loadedConfig.Providers[0].Auth.Token != "ghp_fake" {
 		t.Errorf("provider[0] token after expansion = %q, want %q", loadedConfig.Providers[0].Auth.Token, "ghp_fake")
 	}
-	if loadedConfig.Providers[0].PaginationTimeoutSeconds != 90 {
-		t.Errorf("provider[0] pagination_timeout_seconds = %d, want 90", loadedConfig.Providers[0].PaginationTimeoutSeconds)
+	if loadedConfig.Providers[0].PaginationTimeoutSeconds != 30 {
+		t.Errorf("provider[0] pagination_timeout_seconds = %d, want 30", loadedConfig.Providers[0].PaginationTimeoutSeconds)
 	}
 
 	draft := loadedConfig.Views[0].Filter.Draft
