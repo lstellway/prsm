@@ -370,7 +370,7 @@ by = "review_status"
 	if err == nil {
 		t.Fatal("expected error for PR-specific group key on issue view, got nil")
 	}
-	if !strings.Contains(err.Error(), "is not valid for resource") {
+	if !strings.Contains(err.Error(), "is only valid for resource type") {
 		t.Errorf("error %q does not mention resource incompatibility", err)
 	}
 }

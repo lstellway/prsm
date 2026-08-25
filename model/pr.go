@@ -1,3 +1,8 @@
+// Package model defines prsm's normalized resource types — PullRequest,
+// Identity, ProviderInstance, and the lazy-fetch LoadResult[T] wrapper — the
+// vendor-agnostic schema every adapter normalizes into and every consumer
+// reads from. It carries no presentation or transport concerns and imports
+// nothing else from this module.
 package model
 
 import "time"

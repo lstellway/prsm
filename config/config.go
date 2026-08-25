@@ -1,3 +1,8 @@
+// Package config loads and validates prsm's TOML configuration file —
+// provider connections, named views, and hooks — into the types the assembly
+// layer (package prsm) maps into vendor adapter configs. LoadFile is the
+// entry point; unknown keys warn and continue, all other validation failures
+// are fatal.
 package config
 
 import (

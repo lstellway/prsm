@@ -1,3 +1,9 @@
+// Package query implements the vendor-agnostic filter, sort, group, and
+// fuzzy-match pipeline that every consumer (TUI, MCP server, HTTP API,
+// library) composes over model.PullRequest without modification. Apply is the
+// standard pipeline entry point; PRFilterSpec and GroupSpec are the
+// serializable, resource-typed specs a config-declared view compiles or
+// validates against.
 package query
 
 import "github.com/lstellway/prsm/model"
