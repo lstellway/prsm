@@ -75,6 +75,9 @@ func paginationTimeout(seconds int) time.Duration {
 
 // gitlabConfig maps a config.ProviderConfig to the GitLab adapter's Config type.
 // Basic-auth credentials have no GitLab equivalent and are dropped.
+// PaginationTimeoutSeconds has no equivalent yet either — the GitLab adapter
+// is not implemented, so there is nowhere to carry it — and is dropped the
+// same way until that adapter's own Config gains the field.
 func gitlabConfig(providerConfig config.ProviderConfig) adaptergitlab.Config {
 	return adaptergitlab.Config{
 		Name:     providerConfig.Name,
@@ -88,6 +91,9 @@ func gitlabConfig(providerConfig config.ProviderConfig) adaptergitlab.Config {
 // giteaConfig maps a config.ProviderConfig to the Gitea adapter's Config type.
 // Gitea is the only provider accepting basic auth, so Username/Password are
 // carried through; groups have no Gitea equivalent and are dropped.
+// PaginationTimeoutSeconds has no equivalent yet either — the Gitea adapter
+// is not implemented, so there is nowhere to carry it — and is dropped the
+// same way until that adapter's own Config gains the field.
 func giteaConfig(providerConfig config.ProviderConfig) adaptergitea.Config {
 	return adaptergitea.Config{
 		Name:     providerConfig.Name,

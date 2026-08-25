@@ -182,28 +182,76 @@ func (githubAdapter *GitHubAdapter) ListPullRequests(ctx context.Context) ([]mod
 
 	for _, repoRef := range githubAdapter.repos {
 		pullRequests, err := githubAdapter.listRepoPullRequests(ctx, repoRef.Owner, repoRef.Repo)
+		// Appended before the error check: a repo whose fetch failed partway
+		// through pagination still contributes whatever pages it got back.
+		allPullRequests = append(allPullRequests, pullRequests...)
 		if err != nil {
 			fetchErrors = append(fetchErrors, err)
-			continue
 		}
-		allPullRequests = append(allPullRequests, pullRequests...)
 	}
 	return allPullRequests, errors.Join(fetchErrors...)
 }
 
 // paginationError builds the error for a page-fetch failure inside a
-// paginated loop. ctx is the operation-scoped context returned by
-// context.WithTimeout, so ctx.Err() is non-nil exactly when that deadline (or
-// an outer cancellation) is what stopped the loop; the message says so
-// explicitly in that case. err is preserved via %w either way, so
-// errors.Is/As — including reaching context.DeadlineExceeded,
-// adapter.RateLimitError, or adapter.AuthError — still works through the
-// result.
+// paginated loop. It attributes the failure to the pagination deadline only
+// when ctx's own error is specifically context.DeadlineExceeded — not any
+// other reason ctx ended, such as an outer caller cancelling it first —
+// so the message never blames a timeout that did not actually fire. err is
+// preserved via %w either way, so errors.Is/As — including reaching
+// context.DeadlineExceeded, adapter.RateLimitError, or adapter.AuthError —
+// still works through the result.
 func paginationError(ctx context.Context, timeout time.Duration, prefix string, page int, err error) error {
-	if ctx.Err() != nil {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return fmt.Errorf("%s: exceeded %s pagination timeout after %d page(s): %w", prefix, timeout, page, err)
 	}
 	return fmt.Errorf("%s: %w", prefix, err)
+}
+
+// paginate drives a classic GitHub REST list endpoint through every page
+// fetchPage exposes. page starts at the sentinel 0 so the first call omits
+// the page query parameter entirely (GitHub's own page-1 default), and every
+// call after that uses whatever NextPage the previous response reported —
+// the API's own account of what "next" means, not a locally computed
+// counter.
+//
+// The whole operation, not each individual request, is bounded by timeout:
+// paginate wraps ctx in its own context.WithTimeout, so a caller that never
+// sets a deadline still cannot be stalled by an arbitrarily slow multi-page
+// fetch. Whatever items were accumulated before a failure — a fetch error, a
+// rate limit, the timeout firing, or the maxPages safety cap — are always
+// returned alongside the error, never discarded; it is on callers to decide
+// how to interpret a partial result (see LoadCI, which treats zero
+// accumulated items on error differently from a genuine empty success).
+func paginate[Item any](
+	ctx context.Context, timeout time.Duration, maxPages int, prefix string, instance model.ProviderInstance,
+	fetchPage func(ctx context.Context, page int) ([]Item, *gogithub.Response, error),
+) ([]Item, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	var allItems []Item
+	page := 0
+	for pageCount := 1; ; pageCount++ {
+		if pageCount > maxPages {
+			return allItems, fmt.Errorf("%s: exceeded %d-page limit", prefix, maxPages)
+		}
+
+		items, response, err := fetchPage(ctx, page)
+		if err != nil {
+			return allItems, paginationError(ctx, timeout, prefix, pageCount, err)
+		}
+		if rateLimitErr := checkRateLimit(instance, response.Response); rateLimitErr != nil {
+			return allItems, rateLimitErr
+		}
+		allItems = append(allItems, items...)
+
+		if response.NextPage == 0 {
+			break
+		}
+		page = response.NextPage
+	}
+
+	return allItems, nil
 }
 
 func (githubAdapter *GitHubAdapter) listRepoPullRequests(
@@ -212,53 +260,38 @@ func (githubAdapter *GitHubAdapter) listRepoPullRequests(
 	// 50 pages × 100 PRs = 5,000 PRs maximum per repo per call.
 	const maxPages = 50
 
-	paginationTimeout := githubAdapter.effectivePaginationTimeout()
-	ctx, cancel := context.WithTimeout(ctx, paginationTimeout)
-	defer cancel()
+	// Read once so every PR in this call is stamped with the same instance,
+	// rather than later pages picking up an identity resolved mid-fetch.
+	instance := githubAdapter.Instance()
+	prefix := fmt.Sprintf("github %q: list PRs %s/%s", githubAdapter.providerName, owner, repo)
 
 	listOptions := &gogithub.PullRequestListOptions{
 		State:       "open",
 		ListOptions: gogithub.ListOptions{PerPage: 100},
 	}
 
-	// Read once so every PR in this call is stamped with the same instance,
-	// rather than later pages picking up an identity resolved mid-fetch.
-	instance := githubAdapter.Instance()
-
-	prefix := fmt.Sprintf("github %q: list PRs %s/%s", githubAdapter.providerName, owner, repo)
+	rawPullRequests, err := paginate(ctx, githubAdapter.effectivePaginationTimeout(), maxPages, prefix, instance,
+		func(ctx context.Context, page int) ([]*gogithub.PullRequest, *gogithub.Response, error) {
+			listOptions.Page = page
+			return githubAdapter.rest.PullRequests.List(ctx, owner, repo, listOptions)
+		})
 
 	var allPullRequests []model.PullRequest
-	for page := 1; ; page++ {
-		if page > maxPages {
-			return allPullRequests, fmt.Errorf("%s: exceeded %d-page limit", prefix, maxPages)
-		}
-
-		pullRequestPage, response, err := githubAdapter.rest.PullRequests.List(ctx, owner, repo, listOptions)
-		if err != nil {
-			return allPullRequests, paginationError(ctx, paginationTimeout, prefix, page, err)
-		}
-		if rateLimitErr := checkRateLimit(instance, response.Response); rateLimitErr != nil {
-			return allPullRequests, rateLimitErr
-		}
-
-		for _, pullRequest := range pullRequestPage {
-			allPullRequests = append(allPullRequests, normalizePR(pullRequest, owner, repo, instance))
-		}
-
-		if response.NextPage == 0 {
-			break
-		}
-		listOptions.Page = response.NextPage
+	for _, pullRequest := range rawPullRequests {
+		allPullRequests = append(allPullRequests, normalizePR(pullRequest, owner, repo, instance))
 	}
-
-	return allPullRequests, nil
+	return allPullRequests, err
 }
 
 // LoadCI fetches CI/check-run status for a PR's head commit via REST.
 // The whole paginated fetch is bounded by Config.PaginationTimeout; if a page
 // fails or the deadline fires partway through, the status returned still
 // summarizes whichever check runs were fetched before that point, alongside
-// the error describing why pagination stopped.
+// the error describing why pagination stopped — unless zero check runs were
+// fetched at all, in which case the status is reported as unknown rather
+// than CIStateNone, which is model.CIStatus's documented, more specific
+// claim that CI ran nowhere on this PR; a failed fetch has not established
+// that.
 func (githubAdapter *GitHubAdapter) LoadCI(
 	ctx context.Context, pullRequestRef model.PullRequestRef,
 ) (model.CIStatus, error) {
@@ -269,38 +302,27 @@ func (githubAdapter *GitHubAdapter) LoadCI(
 	// 50 pages × 100 runs = 5,000 check runs maximum per SHA.
 	const maxPages = 50
 
-	paginationTimeout := githubAdapter.effectivePaginationTimeout()
-	ctx, cancel := context.WithTimeout(ctx, paginationTimeout)
-	defer cancel()
-
-	listOptions := &gogithub.ListCheckRunsOptions{
-		ListOptions: gogithub.ListOptions{PerPage: 100},
-	}
-
+	instance := githubAdapter.Instance()
 	prefix := fmt.Sprintf("github %q: load CI for %s#%d",
 		githubAdapter.providerName, pullRequestRef.Repo.Name, pullRequestRef.Number)
 
-	var allCheckRuns []*gogithub.CheckRun
-	for page := 1; ; page++ {
-		if page > maxPages {
-			return normalizeCIStatus(allCheckRuns), fmt.Errorf("%s: exceeded %d-page limit", prefix, maxPages)
-		}
-		checkRunsResponse, response, err := githubAdapter.rest.Checks.ListCheckRunsForRef(
-			ctx, pullRequestRef.Repo.Owner, pullRequestRef.Repo.Name, pullRequestRef.HeadSHA, listOptions)
-		if err != nil {
-			return normalizeCIStatus(allCheckRuns), paginationError(ctx, paginationTimeout, prefix, page, err)
-		}
-		if rateLimitErr := checkRateLimit(githubAdapter.Instance(), response.Response); rateLimitErr != nil {
-			return normalizeCIStatus(allCheckRuns), rateLimitErr
-		}
-		allCheckRuns = append(allCheckRuns, checkRunsResponse.CheckRuns...)
-		if response.NextPage == 0 {
-			break
-		}
-		listOptions.Page = response.NextPage
-	}
+	listOptions := &gogithub.ListCheckRunsOptions{ListOptions: gogithub.ListOptions{PerPage: 100}}
 
-	return normalizeCIStatus(allCheckRuns), nil
+	allCheckRuns, err := paginate(ctx, githubAdapter.effectivePaginationTimeout(), maxPages, prefix, instance,
+		func(ctx context.Context, page int) ([]*gogithub.CheckRun, *gogithub.Response, error) {
+			listOptions.Page = page
+			checkRunsResponse, response, err := githubAdapter.rest.Checks.ListCheckRunsForRef(
+				ctx, pullRequestRef.Repo.Owner, pullRequestRef.Repo.Name, pullRequestRef.HeadSHA, listOptions)
+			if err != nil {
+				return nil, response, err
+			}
+			return checkRunsResponse.CheckRuns, response, nil
+		})
+
+	if len(allCheckRuns) == 0 && err != nil {
+		return model.CIStatus{}, err
+	}
+	return normalizeCIStatus(allCheckRuns), err
 }
 
 // LoadReviewerStates fetches individual review decisions for a PR via REST.
@@ -314,36 +336,20 @@ func (githubAdapter *GitHubAdapter) LoadReviewerStates(
 	// 50 pages × 100 reviews = 5,000 reviews maximum per PR.
 	const maxPages = 50
 
-	paginationTimeout := githubAdapter.effectivePaginationTimeout()
-	ctx, cancel := context.WithTimeout(ctx, paginationTimeout)
-	defer cancel()
-
-	listOptions := &gogithub.ListOptions{PerPage: 100}
-	var allReviews []*gogithub.PullRequestReview
-
+	instance := githubAdapter.Instance()
 	prefix := fmt.Sprintf("github %q: load reviews for %s#%d",
 		githubAdapter.providerName, pullRequestRef.Repo.Name, pullRequestRef.Number)
 
-	for page := 1; ; page++ {
-		if page > maxPages {
-			return normalizeReviewerStates(allReviews), fmt.Errorf("%s: exceeded %d-page limit", prefix, maxPages)
-		}
-		reviewPage, response, err := githubAdapter.rest.PullRequests.ListReviews(
-			ctx, pullRequestRef.Repo.Owner, pullRequestRef.Repo.Name, pullRequestRef.Number, listOptions)
-		if err != nil {
-			return normalizeReviewerStates(allReviews), paginationError(ctx, paginationTimeout, prefix, page, err)
-		}
-		if rateLimitErr := checkRateLimit(githubAdapter.Instance(), response.Response); rateLimitErr != nil {
-			return normalizeReviewerStates(allReviews), rateLimitErr
-		}
-		allReviews = append(allReviews, reviewPage...)
-		if response.NextPage == 0 {
-			break
-		}
-		listOptions.Page = response.NextPage
-	}
+	listOptions := &gogithub.ListOptions{PerPage: 100}
 
-	return normalizeReviewerStates(allReviews), nil
+	allReviews, err := paginate(ctx, githubAdapter.effectivePaginationTimeout(), maxPages, prefix, instance,
+		func(ctx context.Context, page int) ([]*gogithub.PullRequestReview, *gogithub.Response, error) {
+			listOptions.Page = page
+			return githubAdapter.rest.PullRequests.ListReviews(
+				ctx, pullRequestRef.Repo.Owner, pullRequestRef.Repo.Name, pullRequestRef.Number, listOptions)
+		})
+
+	return normalizeReviewerStates(allReviews), err
 }
 
 // LoadDiff fetches commit and file-change counts for a PR via the REST detail endpoint.
