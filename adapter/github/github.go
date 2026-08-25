@@ -31,6 +31,14 @@ const defaultAPIBaseURL = "https://api.github.com"
 // budget compounds quickly across a poll tick.
 const defaultPaginationTimeout = 30 * time.Second
 
+// maxPaginationPages bounds every paginated operation (PR lists, CI check
+// runs, reviews) to at most this many pages — 5,000 items at the
+// 100-per-page size used throughout this file. It is a generic safety cap
+// against a runaway or pathologically large listing, not a value tuned
+// per resource kind, so all call sites share it rather than each declaring
+// their own copy of the same number.
+const maxPaginationPages = 50
+
 // RepoRef identifies a repository to poll. Owner/repo pairs are GitHub's own
 // addressing vocabulary, so the type lives here rather than in the shared
 // adapter package: a Jenkins connection polls job paths and a local checkout
@@ -257,9 +265,6 @@ func paginate[Item any](
 func (githubAdapter *GitHubAdapter) listRepoPullRequests(
 	ctx context.Context, owner, repo string,
 ) ([]model.PullRequest, error) {
-	// 50 pages × 100 PRs = 5,000 PRs maximum per repo per call.
-	const maxPages = 50
-
 	// Read once so every PR in this call is stamped with the same instance,
 	// rather than later pages picking up an identity resolved mid-fetch.
 	instance := githubAdapter.Instance()
@@ -270,7 +275,7 @@ func (githubAdapter *GitHubAdapter) listRepoPullRequests(
 		ListOptions: gogithub.ListOptions{PerPage: 100},
 	}
 
-	rawPullRequests, err := paginate(ctx, githubAdapter.effectivePaginationTimeout(), maxPages, prefix, instance,
+	rawPullRequests, err := paginate(ctx, githubAdapter.effectivePaginationTimeout(), maxPaginationPages, prefix, instance,
 		func(ctx context.Context, page int) ([]*gogithub.PullRequest, *gogithub.Response, error) {
 			listOptions.Page = page
 			return githubAdapter.rest.PullRequests.List(ctx, owner, repo, listOptions)
@@ -299,16 +304,13 @@ func (githubAdapter *GitHubAdapter) LoadCI(
 		return model.CIStatus{State: model.CIStateNone}, nil
 	}
 
-	// 50 pages × 100 runs = 5,000 check runs maximum per SHA.
-	const maxPages = 50
-
 	instance := githubAdapter.Instance()
 	prefix := fmt.Sprintf("github %q: load CI for %s#%d",
 		githubAdapter.providerName, pullRequestRef.Repo.Name, pullRequestRef.Number)
 
 	listOptions := &gogithub.ListCheckRunsOptions{ListOptions: gogithub.ListOptions{PerPage: 100}}
 
-	allCheckRuns, err := paginate(ctx, githubAdapter.effectivePaginationTimeout(), maxPages, prefix, instance,
+	allCheckRuns, err := paginate(ctx, githubAdapter.effectivePaginationTimeout(), maxPaginationPages, prefix, instance,
 		func(ctx context.Context, page int) ([]*gogithub.CheckRun, *gogithub.Response, error) {
 			listOptions.Page = page
 			checkRunsResponse, response, err := githubAdapter.rest.Checks.ListCheckRunsForRef(
@@ -333,16 +335,13 @@ func (githubAdapter *GitHubAdapter) LoadCI(
 func (githubAdapter *GitHubAdapter) LoadReviewerStates(
 	ctx context.Context, pullRequestRef model.PullRequestRef,
 ) ([]model.ReviewerState, error) {
-	// 50 pages × 100 reviews = 5,000 reviews maximum per PR.
-	const maxPages = 50
-
 	instance := githubAdapter.Instance()
 	prefix := fmt.Sprintf("github %q: load reviews for %s#%d",
 		githubAdapter.providerName, pullRequestRef.Repo.Name, pullRequestRef.Number)
 
 	listOptions := &gogithub.ListOptions{PerPage: 100}
 
-	allReviews, err := paginate(ctx, githubAdapter.effectivePaginationTimeout(), maxPages, prefix, instance,
+	allReviews, err := paginate(ctx, githubAdapter.effectivePaginationTimeout(), maxPaginationPages, prefix, instance,
 		func(ctx context.Context, page int) ([]*gogithub.PullRequestReview, *gogithub.Response, error) {
 			listOptions.Page = page
 			return githubAdapter.rest.PullRequests.ListReviews(
