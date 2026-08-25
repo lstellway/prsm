@@ -16,18 +16,35 @@
 # against the schema as prsm evolves — if a config field changes shape,
 # this file (and that test) breaks along with it.
 
+# ---------------------------------------------------------------------------
+# Session defaults
+# ---------------------------------------------------------------------------
+
 [defaults]
-refresh_interval_seconds = 60
-default_view = "my-reviews"
+refresh_interval_seconds = 60             # how often prsm re-polls every connection, in seconds
+default_view             = "my-reviews"   # name of a [[views]] entry below, applied on startup; omit to start unfiltered
+
+# ---------------------------------------------------------------------------
+# Provider instances — one connection per git hosting account/instance
+# ---------------------------------------------------------------------------
 
 [[providers]]
-name = "github-personal"
-type = "github"
+name = "github-personal"   # unique across all providers; referenced by views' filter.provider and shown in output
+type = "github"            # "github" | "gitlab" | "gitea" — selects which adapter serves this connection
+
+# Bounds how long one paginated fetch (the PR list, or CI/reviews for a
+# single PR) may run across all of its pages before it stops and returns
+# whatever it already fetched, plus an error. Optional; defaults to 30
+# seconds when omitted. Raise it for a connection known to be slow, e.g. an
+# overloaded self-hosted instance.
+pagination_timeout_seconds = 30
 
 [providers.auth]
-type  = "pat"
-token = "$GITHUB_TOKEN"
+type  = "pat"             # "pat" | "oauth" | "basic" — pat and oauth are equivalent; basic is Gitea-only and breaks under 2FA
+token = "$GITHUB_TOKEN"   # inline value or a "$ENV_VAR" reference, expanded at load time
 
+# Define [[providers.repos]] to limit this provider to specific repos.
+# Omit entirely to poll every repo the credential can access.
 [[providers.repos]]
 owner = "acme-corp"
 repo  = "api-service"
@@ -39,19 +56,21 @@ repo  = "frontend"
 [[providers]]
 name     = "gitlab-work"
 type     = "gitlab"
-base_url = "https://gitlab.internal.example.com"
+base_url = "https://gitlab.internal.example.com"   # self-hosted instance URL (must be https://); omit for gitlab.com
 
 [providers.auth]
 type  = "pat"
 token = "$GITLAB_TOKEN"
 
+# GitLab-only: poll every project under a group/namespace, as an alternative
+# (or addition) to listing individual [[providers.repos]] entries.
 [[providers.groups]]
 path = "platform-team"
 
 [[providers]]
 name     = "codeberg"
 type     = "gitea"
-base_url = "https://codeberg.org"
+base_url = "https://codeberg.org"   # Codeberg is a public Forgejo instance; the gitea adapter serves both Gitea and Forgejo
 
 [providers.auth]
 type  = "pat"
@@ -61,21 +80,25 @@ token = "$CODEBERG_TOKEN"
 owner = "loganstellway"
 repo  = "public-project"
 
+# ---------------------------------------------------------------------------
+# Views — named filter + sort + group presets, switched between in the TUI
+# ---------------------------------------------------------------------------
+
 [[views]]
-name        = "my-reviews"
-resource    = "pr"
+name        = "my-reviews"   # unique across all views; referenced by defaults.default_view and --view
+resource    = "pr"           # "pr" | "issue" — required; some filter/group keys below are pr-only and are rejected otherwise
 description = "PRs where I am a requested reviewer, non-draft only"
 
 [views.filter]
-reviewer = "me"
-draft    = false
+reviewer = "me"    # "" | "me" | a username — "me" resolves to the authenticated account on each connection
+draft    = false   # true | false — omit the key entirely to not filter on draft state
 
 [views.sort]
-by        = "updated"
-direction = "desc"
+by        = "updated"   # "updated" | "created" | "staleness" | "title"
+direction = "desc"      # "asc" | "desc"
 
 [views.group]
-by = "provider"
+by = "provider"   # "none" | "repo" | "provider" | "author" | "review_status"
 
 [[views]]
 name        = "my-open-prs"
@@ -83,8 +106,8 @@ resource    = "pr"
 description = "All open PRs I authored, newest first"
 
 [views.filter]
-author = "me"
-state  = "open"
+author = "me"     # "" | "me" | a username
+state  = "open"   # "open" | "closed" | "merged" | "draft"
 
 [views.sort]
 by        = "created"
@@ -101,7 +124,7 @@ description = "PRs awaiting my review, untouched for 3+ days"
 [views.filter]
 reviewer       = "me"
 draft          = false
-staleness_days = 3
+staleness_days = 3   # PR must be >= N days since it last updated; 0 or omitted means no filter
 
 [views.sort]
 by        = "staleness"
@@ -116,7 +139,7 @@ resource    = "pr"
 description = "Any open PR in watched repos with a failing pipeline"
 
 [views.filter]
-ci_status = "failing"
+ci_status = "failing"   # "passing" | "failing" | "pending" | "none"
 
 [views.sort]
 by        = "updated"

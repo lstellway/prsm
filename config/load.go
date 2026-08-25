@@ -81,6 +81,12 @@ func validate(loadedConfig *Config, originalTokens, originalPasswords []string) 
 			return fmt.Errorf("config: provider %q: base_url must use https:// (got %q)", provider.Name, provider.BaseURL)
 		}
 
+		// pagination_timeout_seconds: 0 means "use the adapter default", so
+		// only a negative value is rejected.
+		if provider.PaginationTimeoutSeconds < 0 {
+			return fmt.Errorf("config: provider %q: pagination_timeout_seconds must be >= 0", provider.Name)
+		}
+
 		// Rule 8: empty token after env var expansion.
 		if index < len(originalTokens) {
 			originalToken := originalTokens[index]

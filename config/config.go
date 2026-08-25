@@ -34,6 +34,13 @@ type ProviderConfig struct {
 	Auth    AuthConfig         `toml:"auth"`
 	Repos   []RepoRef          `toml:"repos"`
 	Groups  []GroupRef         `toml:"groups"`
+	// PaginationTimeoutSeconds bounds how long one paginating operation
+	// (listing PRs, loading CI, loading reviewer states) may run across all
+	// of its pages before it stops and returns whatever it has fetched so
+	// far plus an error. 0 means unset — the adapter applies its own
+	// default. A self-hosted instance known to be slow may need a larger
+	// value than the default; this must never be negative.
+	PaginationTimeoutSeconds int `toml:"pagination_timeout_seconds"`
 }
 
 // AuthConfig holds credentials for a provider.

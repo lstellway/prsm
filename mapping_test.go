@@ -3,6 +3,7 @@ package prsm
 import (
 	"reflect"
 	"testing"
+	"time"
 
 	adaptergitea "github.com/lstellway/prsm/adapter/gitea"
 	adaptergithub "github.com/lstellway/prsm/adapter/github"
@@ -72,6 +73,22 @@ func TestGitHubConfig(t *testing.T) {
 				Name:  "github-personal",
 				Token: "ghp_token",
 				Repos: []adaptergithub.RepoRef{},
+			},
+		},
+		{
+			// pagination_timeout_seconds is a plain int in config (TOML has
+			// no duration type) and must convert to a time.Duration here.
+			name: "pagination_timeout_converted_to_duration",
+			providerConfig: config.ProviderConfig{
+				Name:                     "github-personal",
+				Auth:                     config.AuthConfig{Token: "ghp_token"},
+				PaginationTimeoutSeconds: 90,
+			},
+			want: adaptergithub.Config{
+				Name:              "github-personal",
+				Token:             "ghp_token",
+				Repos:             []adaptergithub.RepoRef{},
+				PaginationTimeout: 90 * time.Second,
 			},
 		},
 		{

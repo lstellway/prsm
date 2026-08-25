@@ -27,6 +27,11 @@ refresh_interval_seconds = 60
 # name = "github"
 # type = "github"   # "github" | "gitlab" | "gitea"
 #
+# # Bound how long one paginated fetch (PR list, CI, reviews) may run before
+# # it returns partial results plus an error. Defaults to 30 if omitted; raise
+# # it for a self-hosted instance known to be slow.
+# pagination_timeout_seconds = 30
+#
 # [providers.auth]
 # type  = "pat"     # "pat" | "oauth" | "basic"
 # token = "$GITHUB_TOKEN"

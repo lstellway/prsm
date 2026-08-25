@@ -46,6 +46,9 @@ func TestLoadFile_ExampleConfig(t *testing.T) {
 	if loadedConfig.Providers[0].Auth.Token != "ghp_fake" {
 		t.Errorf("provider[0] token after expansion = %q, want %q", loadedConfig.Providers[0].Auth.Token, "ghp_fake")
 	}
+	if loadedConfig.Providers[0].PaginationTimeoutSeconds != 30 {
+		t.Errorf("provider[0] pagination_timeout_seconds = %d, want 30", loadedConfig.Providers[0].PaginationTimeoutSeconds)
+	}
 
 	draft := loadedConfig.Views[0].Filter.Draft
 	if draft == nil || *draft != false {
@@ -199,6 +202,48 @@ token = "tok"
 	}
 	if !strings.Contains(err.Error(), "type must be one of") {
 		t.Errorf("error %q does not list allowed type values", err)
+	}
+}
+
+// A negative pagination_timeout_seconds fails; the field is otherwise optional.
+func TestLoadFile_NegativePaginationTimeout(t *testing.T) {
+	content := `
+[[providers]]
+name = "gh"
+type = "github"
+pagination_timeout_seconds = -1
+
+[providers.auth]
+type  = "pat"
+token = "tok"
+`
+	_, err := config.LoadFile(writeTemp(t, content))
+	if err == nil {
+		t.Fatal("expected error for negative pagination_timeout_seconds, got nil")
+	}
+	if !strings.Contains(err.Error(), "pagination_timeout_seconds must be >= 0") {
+		t.Errorf("error %q does not mention 'pagination_timeout_seconds must be >= 0'", err)
+	}
+}
+
+// pagination_timeout_seconds is optional; omitting it (or setting it to the
+// zero value) must not fail validation — the adapter applies its own default.
+func TestLoadFile_PaginationTimeoutOmitted(t *testing.T) {
+	content := `
+[[providers]]
+name = "gh"
+type = "github"
+
+[providers.auth]
+type  = "pat"
+token = "tok"
+`
+	loadedConfig, err := config.LoadFile(writeTemp(t, content))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if loadedConfig.Providers[0].PaginationTimeoutSeconds != 0 {
+		t.Errorf("pagination_timeout_seconds = %d, want 0", loadedConfig.Providers[0].PaginationTimeoutSeconds)
 	}
 }
 
