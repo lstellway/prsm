@@ -9,6 +9,7 @@ package mock
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/lstellway/prsm/adapter"
@@ -44,9 +45,17 @@ type PullRequestSource struct {
 	ReviewerStatesErr error
 	DiffStats         model.DiffStats
 	DiffErr           error
+
+	// CallCount counts how many times ListPullRequests has been called, for
+	// tests that need to prove a connection genuinely was — or was not —
+	// fetched again (e.g. a poll loop backing off a failing connection),
+	// rather than just inspecting its reported status. Safe to read
+	// concurrently with ListPullRequests via CallCount.Load().
+	CallCount atomic.Int32
 }
 
 func (mockSource *PullRequestSource) ListPullRequests(_ context.Context) ([]model.PullRequest, error) {
+	mockSource.CallCount.Add(1)
 	if mockSource.Delay > 0 {
 		time.Sleep(mockSource.Delay)
 	}
