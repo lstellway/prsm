@@ -1,3 +1,4 @@
 /prsm
 *.test
 /dist/
+.DS_Store
