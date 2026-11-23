@@ -28,7 +28,7 @@ v1 ships the pull-request slice — GitHub, GitLab, and Gitea/Forgejo aggregated
 
 ## Architecture
 
-prsm is a vendor-agnostic resource aggregation layer with the TUI as its first consumer, not its product identity. Five layers with strict downward-only dependencies, plus a shared assembly layer between them and the consumers:
+prsm is a vendor-agnostic resource aggregation layer with the TUI as its first consumer, not its product identity. Layers with strict downward-only dependencies, plus a shared assembly layer between them and the consumers:
 
 ```mermaid
 flowchart TD
@@ -51,4 +51,10 @@ flowchart TD
 
 prsm reads a TOML config file — see [`config.example.toml`](config.example.toml) for a complete, valid reference covering every provider and view option.
 
-See [`CLAUDE.md`](CLAUDE.md) for the full project overview.
+## Contributing
+
+Design principles, architecture rules, and code conventions are in [`AGENTS.md`](AGENTS.md). The roadmap, design decisions, and open questions live in [GitHub Issues](https://github.com/lstellway/prsm/issues).
+
+## Name
+
+`prsm` — "prs" (pull requests) + evokes "prism" (seeing clearly, refracting complexity into clarity). The dropped vowel follows CLI naming convention.

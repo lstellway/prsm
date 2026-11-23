@@ -113,6 +113,11 @@ type ConnectionStatus struct {
 // PullRequestSnapshot is one point-in-time result of fetching pull requests across
 // every connection a Client holds. It carries no memory of any earlier
 // PullRequestSnapshot — see ConnectionStatus.SucceededAt.
+//
+// It is named for its resource kind on purpose. ConnectionStatus is already
+// resource-kind-agnostic, but the fetched payload is not, so a future fetch of
+// another kind returns its own sibling snapshot type rather than widening this
+// one into a snapshot of everything.
 type PullRequestSnapshot struct {
 	// PullRequests is every pull request returned by every connection that
 	// served pull requests, in Client.pullRequestSources order. A
